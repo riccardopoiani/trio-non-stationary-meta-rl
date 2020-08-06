@@ -4,4 +4,4 @@ setup(
     name='a2c-ppo-acktr',
     packages=find_packages(),
     version='0.0.1',
-    install_requires=['gym', 'matplotlib', 'baselines', 'numpy', 'torch'])
+    install_requires=['gym', 'matplotlib', 'baselines', 'numpy', 'torch', 'scikit-learn'])

@@ -3,7 +3,8 @@ from functools import reduce
 import numpy as np
 import torch
 
-from active_learning.observation_utils import augment_obs_posterior, get_posterior
+from sklearn.gaussian_process import GaussianProcessRegressor
+from active_learning.observation_utils import augment_obs_posterior, get_posterior_no_prev
 from network.vae_utils import loss_inference_closed_form
 from ppo_a2c.algo.ppo import PPO
 from ppo_a2c.envs import make_vec_envs_multi_task
@@ -72,9 +73,12 @@ class PosteriorMTAgent:
                          use_clipped_value_loss=True)
 
     def train(self, training_iter, env_name, seed, task_generator,
-              eval_interval, num_task_to_eval, init_vae_steps,
-              num_vae_steps, log_dir=".", use_env_obs=False, verbose=True):
+              eval_interval, num_random_task_to_eval, init_vae_steps,
+              num_vae_steps, num_test_processes, gp_list=None, sw_size=None,
+              test_kwargs=None, init_prior_test=None,
+              log_dir=".", use_env_obs=False, verbose=True):
         eval_list = []
+        test_list = []
         vae_list = []
 
         self.vae_step(init_vae_steps, use_env_obs, task_generator, env_name, seed, log_dir, verbose,
@@ -97,8 +101,17 @@ class PosteriorMTAgent:
             # Evaluation
             if eval_interval is not None and k % eval_interval == 0 and k > 1:
                 print("Epoch {} / {}".format(k, training_iter))
-                e = self.evaluate(num_task_to_eval, task_generator, log_dir, seed, use_env_obs, env_name)
+
+                e = self.evaluate(num_random_task_to_eval, task_generator, log_dir, seed, use_env_obs, env_name)
                 eval_list.append(e)
+                e = self.test_task_sequence(gp_list=gp_list, sw_size=sw_size,
+                                            env_name=env_name, seed=seed,
+                                            log_dir=log_dir,
+                                            envs_kwargs_list=test_kwargs,
+                                            init_prior=init_prior_test,
+                                            use_env_obs=use_env_obs,
+                                            num_eval_processes=num_test_processes)
+                test_list.append(e)
 
         return eval_list, vae_list
 
@@ -155,8 +168,8 @@ class PosteriorMTAgent:
                             rollouts_multi_task.masks[step])
 
                     obs, reward, done, infos = envs.step(action)
-                    posterior = get_posterior(self.vae, action, reward, prior, prev_task, max_action=self.max_action,
-                                              min_action=self.min_action, use_prev_state=use_prev_state)
+                    posterior = get_posterior_no_prev(self.vae, action, reward, prior, max_action=self.max_action,
+                                                      min_action=self.min_action, use_prev_state=use_prev_state)
                     obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                                 use_env_obs, rescale_obs=self.rescale_obs,
                                                 max_old=self.max_old, min_old=self.min_old)
@@ -173,7 +186,7 @@ class PosteriorMTAgent:
 
             # Now that data have been collected, we train the variational model
             self.vae_optim.zero_grad()
-            z_hat, mu_hat, logvar_hat = self.vae(context, torch.tensor(prev_task), prior)
+            z_hat, mu_hat, logvar_hat = self.vae(context, prior)
 
             loss, mse, kdl = loss_inference_closed_form(new_tasks, mu_hat, logvar_hat, mu_prior, logvar_prior, None,
                                                         verbose)
@@ -214,8 +227,8 @@ class PosteriorMTAgent:
 
             # Observe reward and next obs
             obs, reward, done, infos = envs.step(action)
-            posterior = get_posterior(self.vae, action, reward, prior, prev_task, max_action=self.max_action,
-                                      min_action=self.min_action, use_prev_state=use_prev_state)
+            posterior = get_posterior_no_prev(self.vae, action, reward, prior, max_action=self.max_action,
+                                              min_action=self.min_action, use_prev_state=use_prev_state)
             obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                         use_env_obs, rescale_obs=self.rescale_obs,
                                         max_old=self.max_old, min_old=self.min_old)
@@ -273,9 +286,9 @@ class PosteriorMTAgent:
 
                 # Observe reward and next obs
                 obs, reward, done, infos = eval_envs.step(action)
-                posterior = get_posterior(self.vae, action, reward, prior, prev_task,
-                                          min_action=self.min_action, max_action=self.max_action,
-                                          use_prev_state=use_prev_state)
+                posterior = get_posterior_no_prev(self.vae, action, reward, prior,
+                                                  min_action=self.min_action, max_action=self.max_action,
+                                                  use_prev_state=use_prev_state)
                 obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                             use_env_obs, rescale_obs=self.rescale_obs,
                                             max_old=self.max_old, min_old=self.min_old)
@@ -298,11 +311,89 @@ class PosteriorMTAgent:
         print("Evaluation using {} tasks. Mean reward: {}".format(num_task_to_evaluate, np.mean(r_epi_list)))
         return np.mean(r_epi_list)
 
-    def test_task_sequence(self, env_name, seed, log_dir, envs_kwargs_list):
+    def test_task_sequence(self, gp_list, sw_size, env_name, seed, log_dir, envs_kwargs_list, init_prior, use_env_obs,
+                           num_eval_processes):
+        print("Meta-testing...")
+
         num_tasks = len(envs_kwargs_list)
 
-        for kwargs in envs_kwargs_list:
-            # Create task
-            eval_envs = make_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
-                                                 False, kwargs, num_frame_stack=None)
+        eval_episode_rewards = []
 
+        prior = init_prior
+        posterior_history = torch.empty(num_tasks, num_eval_processes, 2 * self.latent_dim)
+
+        for t, kwargs in enumerate(envs_kwargs_list):
+            # Task creation
+            temp = [kwargs for _ in range(num_eval_processes)]
+            eval_envs = make_vec_envs_multi_task(env_name, seed, num_eval_processes, self.gamma, log_dir, self.device,
+                                                 False, temp, num_frame_stack=None)
+
+            obs = eval_envs.reset()
+            obs = augment_obs_posterior(obs, self.latent_dim, prior,
+                                        use_env_obs, rescale_obs=self.rescale_obs,
+                                        max_old=self.max_old, min_old=self.min_old)
+
+            eval_recurrent_hidden_states = torch.zeros(
+                num_eval_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
+            eval_masks = torch.zeros(num_eval_processes, 1, device=self.device)
+
+            use_prev_state = False
+
+            task_epi_rewards = []
+
+            while len(task_epi_rewards) < num_eval_processes:
+                with torch.no_grad():
+                    _, action, _, eval_recurrent_hidden_states = self.actor_critic.act(
+                        obs,
+                        eval_recurrent_hidden_states,
+                        eval_masks,
+                        deterministic=False)
+
+                # Observe reward and next obs
+                obs, reward, done, infos = eval_envs.step(action)
+                posterior = get_posterior_no_prev(self.vae, action, reward, prior,
+                                                  min_action=self.min_action, max_action=self.max_action,
+                                                  use_prev_state=use_prev_state)
+                obs = augment_obs_posterior(obs, self.latent_dim, posterior,
+                                            use_env_obs, rescale_obs=self.rescale_obs,
+                                            max_old=self.max_old, min_old=self.min_old)
+
+                use_prev_state = True
+                eval_masks = torch.tensor(
+                    [[0.0] if done_ else [1.0] for done_ in done],
+                    dtype=torch.float32,
+                    device=self.device)
+
+                for info in infos:
+                    if 'episode' in info.keys():
+                        total_epi_reward = info['episode']['r']
+                        task_epi_rewards.append(total_epi_reward)
+
+            eval_episode_rewards.append(np.mean(task_epi_rewards))
+            eval_envs.close()
+
+            # Retrieve new prior for the identified model so far
+            posterior_history[t, :, :] = posterior
+            x = np.atleast_2d(np.arange(t + 1)).T
+            for dim in range(self.latent_dim):
+                for proc in range(num_eval_processes):
+                    if t > sw_size:
+                        gp_list[dim][proc].fit(x[-sw_size:],
+                                               np.atleast_2d(
+                                                   posterior_history[t + 1 - sw_size:t + 1, proc, dim].numpy()).T)
+                    else:
+                        gp_list[dim][proc].fit(x,
+                                               np.atleast_2d(posterior_history[0:t + 1, proc, dim].numpy()).T)
+
+            prior = []
+            for proc in range(num_eval_processes):
+                prior_proc = torch.empty(self.latent_dim, 2)
+                for dim in range(self.latent_dim):
+                    temp = np.atleast_2d(np.array([15])).T
+                    y_pred, sigma = gp_list[dim][proc].predict(temp, return_std=True)
+                    prior_proc[dim, 0] = y_pred[0, 0]
+                    prior_proc[dim, 1] = sigma[0]
+                prior.append(prior_proc)
+
+        print("Reward : {}".format(np.mean(eval_episode_rewards)))
+        return eval_episode_rewards

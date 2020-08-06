@@ -2,15 +2,51 @@ import torch
 import numpy as np
 import pickle
 
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, Product, ConstantKernel as C
+
 import gym_sin
 from gym import spaces
 
 from active_learning.arguments import get_args
 from active_learning.oracle import OracleAgent
 from active_learning.posterior_multi_task import PosteriorMTAgent
-from network.vae import InferenceNetwork, InferenceNetwork2
+from network.vae import InferenceNetwork, InferenceNetwork2, InferenceNetworkNoPrev
 from task.GuassianTaskGenerator import GaussianTaskGenerator
 from utilities.folder_management import handle_folder_creation
+
+
+def get_task_sequence(alpha, n_restarts, num_test_processes, ):
+    kernel = C(1.0, (1e-5, 1e5)) * RBF(1, (1e-5, 1e5))
+
+    gp_list = []
+    for i in range(2):
+        gp_list.append([GaussianProcessRegressor(kernel=kernel,
+                                                 alpha=alpha ** 2,
+                                                 normalize_y=True,
+                                                 n_restarts_optimizer=n_restarts)
+                        for _ in range(num_test_processes)])
+    test_kwargs = []
+    init_prior_test = [torch.tensor([[15, 30], [4, 4]], dtype=torch.float32) for _ in range(num_test_processes)]
+
+    for idx in range(50):
+        if idx < 15:
+            mean = 15
+            std = 30
+        elif idx > 40:
+            mean = 40
+            std = 30
+        else:
+            mean = 15 + idx
+            std = 30 - idx / 16
+
+        test_kwargs.append({'amplitude': 1,
+                            'mean': mean,
+                            'std': std,
+                            'noise_std': 0.001,
+                            'scale_reward': False})
+
+    return gp_list, test_kwargs, init_prior_test
 
 
 def main():
@@ -98,7 +134,7 @@ def main():
 
         obs_shape = (4,)
 
-        vi = InferenceNetwork(n_in=8, z_dim=latent_dim)
+        vi = InferenceNetworkNoPrev(n_in=6, z_dim=latent_dim)
         vi_optim = torch.optim.Adam(vi.parameters())
 
         agent = PosteriorMTAgent(action_space=action_space, device=device, gamma=args.gamma,
@@ -128,16 +164,25 @@ def main():
                                  max_action=100,
                                  min_action=-100)
 
+        gp_list, test_kwargs, init_prior_test = get_task_sequence(alpha=args.alpha_gp,
+                                                                  n_restarts=args.n_restarts_gp,
+                                                                  num_test_processes=args.num_test_processes)
+
         res_eval, res_vae, = agent.train(training_iter=args.training_iter,
                                          env_name=env_name,
                                          seed=args.seed,
                                          task_generator=task_generator,
                                          eval_interval=args.eval_interval,
                                          log_dir=args.log_dir,
-                                         num_task_to_eval=args.num_task_to_eval,
                                          use_env_obs=False,
                                          num_vae_steps=args.num_vae_steps,
-                                         init_vae_steps=args.init_vae_steps)
+                                         init_vae_steps=args.init_vae_steps,
+                                         gp_list=gp_list,
+                                         sw_size=args.sw_gp,
+                                         test_kwargs=test_kwargs,
+                                         init_prior_test=init_prior_test,
+                                         num_random_task_to_eval=args.num_random_task_to_eval,
+                                         num_test_processes=args.num_test_processes)
 
         with open("{}vae.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(res_vae, output)

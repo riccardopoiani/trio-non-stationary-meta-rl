@@ -74,6 +74,26 @@ def al_augment_obs(obs, latent_dim, posterior, prior, rescale_obs=True, max_old=
     return new_obs
 
 
+def get_posterior_no_prev(vi, action, reward, prior, max_action, min_action, use_prev_state=True):
+    """
+    Feed the variational model with the actual reward to identify the latent space
+    and get the current reward using the posterior and the true task
+    """
+    num_proc = action.shape[0]
+    flatten_prior = torch.tensor([prior[i].flatten().tolist() for i in range(num_proc)])
+
+    # To feed VI, i need (n_batch, 1, 2)
+    context = torch.empty(num_proc, 1, 2)
+    for i in range(num_proc):
+        t = (max_action - (-min_action)) / (1 - (-1)) * (action[i] - 1) + max_action
+        context[i] = torch.cat([t, reward[i]])
+
+    res = vi(context=context, prior=flatten_prior, use_prev_state=use_prev_state)
+    res = res[1:]
+    res = torch.cat([res[0].detach(), res[1].detach()], 1)
+    return res
+
+
 def get_posterior(vi, action, reward, prior, prev_latent_space, max_action, min_action, use_prev_state=True):
     """
     Feed the variational model with the actual reward to identify the latent space
