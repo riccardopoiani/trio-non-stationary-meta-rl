@@ -7,7 +7,8 @@ def get_args():
     parser = argparse.ArgumentParser(description="AL")
 
     parser.add_argument("--algo", default="oracle",
-                        help="algorithm to use: oracle | fixed_id | posterior_multi_task | ours")
+                        help="algorithm to use: oracle | fixed_id | posterior_multi_task | ours"
+                             "new_posterior_multi_task")
 
     # RL parameters
     parser.add_argument('--gamma', default=0.99)
@@ -29,6 +30,26 @@ def get_args():
     parser.add_argument('--use-gae', default=False, type=bool)
     parser.add_argument('--gae_lambda', default=0.95, type=float)
     parser.add_argument('--use-proper-time-limits', default=False, type=bool)
+
+    # Identification parameters
+    parser.add_argument('--hidden-size-id', default=32, type=int)
+    parser.add_argument('--use-elu-id', default=True, type=bool)
+    parser.add_argument('--recurrent-id', default=False, type=bool)
+
+    parser.add_argument('--clip-param-id', default=0.2, type=float)
+    parser.add_argument('--ppo-epoch-id', default=4, type=int)
+    parser.add_argument('--value-loss-coef-id', default=0.5, type=float)
+    parser.add_argument('--lr-id', default=0.00005, type=float)
+    parser.add_argument('--eps-id', default=1e-6, type=float)
+    parser.add_argument('--max-grad-norm-id', default=0.5, type=float)
+    parser.add_argument('--num-step-id', default=30, type=float)
+    parser.add_argument('--gamma-id', default=0.9, type=float)
+    parser.add_argument('--num-mini-batch-id', default=8, type=int)
+    parser.add_argument('--entropy-coef-id', default=0., type=float)
+
+    parser.add_argument('--training-iter-opt', default=2000, type=int)
+    parser.add_argument('--training-iter-id', default=2000, type=int)
+    parser.add_argument('--max-id-iteration', default=10, type=int)
 
     # GP parameters
     parser.add_argument('--n-restarts-gp', default=1, type=int, help="number of restarts for GP at meta-test time")
@@ -58,6 +79,6 @@ def get_args():
 
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
-    assert args.algo in ['oracle', 'fixed_id', 'posterior_multi_task', 'ours']
+    assert args.algo in ['oracle', 'fixed_id', 'posterior_multi_task', 'ours', 'new_posterior_multi_task']
 
     return args

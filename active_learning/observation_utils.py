@@ -1,6 +1,21 @@
 import torch
 
 
+def augment_obs_time(obs, time, rescale_time, max_time=None):
+    num_proc = obs.shape[0]
+
+    new_obs = torch.tensor((num_proc, obs.shape[1] + 1))
+
+    new_obs[:, 0:-1] = obs
+
+    if rescale_time:
+        new_obs[:, -1] = time / max_time
+    else:
+        new_obs[:, -1] = time
+
+    return new_obs
+
+
 def oracle_augment_obs(obs, latent, latent_dim, use_env_obs):
     """
     Augment observation with the latent space
@@ -25,7 +40,10 @@ def oracle_augment_obs(obs, latent, latent_dim, use_env_obs):
         new_obs = torch.empty((num_proc, latent_dim))
 
         for i in range(num_proc):
-            new_obs[i] = torch.tensor(latent[i])
+            if type(latent[i] == torch.tensor):
+                new_obs[i] = latent[i].clone().detach()
+            else:
+                new_obs[i] = torch.tensor(latent[i])
 
     return new_obs
 
@@ -85,7 +103,7 @@ def get_posterior_no_prev(vi, action, reward, prior, max_action, min_action, use
     # To feed VI, i need (n_batch, 1, 2)
     context = torch.empty(num_proc, 1, 2)
     for i in range(num_proc):
-        t = (max_action - (-min_action)) / (1 - (-1)) * (action[i] - 1) + max_action
+        t = (max_action - min_action) / (1 - (-1)) * (action[i] - 1) + max_action
         context[i] = torch.cat([t, reward[i]])
 
     res = vi(context=context, prior=flatten_prior, use_prev_state=use_prev_state)
@@ -106,7 +124,7 @@ def get_posterior(vi, action, reward, prior, prev_latent_space, max_action, min_
     # To feed VI, i need (n_batch, 1, 2)
     context = torch.empty(num_proc, 1, 2)
     for i in range(num_proc):
-        t = (max_action - (-min_action)) / (1 - (-1)) * (action[i] - 1) + max_action
+        t = (max_action - min_action) / (1 - (-1)) * (action[i] - 1) + max_action
         context[i] = torch.cat([t, reward[i]])
 
     res = vi(context=context, prev_z=prev_latent_space, prior=flatten_prior, use_prev_state=use_prev_state)
@@ -134,3 +152,25 @@ def rescale_posterior(num_proc, old_var, latent_dim, max_old, min_old, verbose=F
         rescaled_posterior.append(new)
 
     return torch.tensor(rescaled_posterior)
+
+
+def rescale_latent(num_proc, old_var, latent_dim, max_old, min_old, verbose=False):
+    rescale_var = []
+
+    for i in range(num_proc):
+        new = []
+        for j in range(latent_dim):
+
+            t = (1 - (-1)) / (max_old[j] - min_old[j]) * (old_var[i][j] - max_old[j]) + 1
+            if t > 1:
+                if verbose:
+                    print("Exceeding max in posterior dim {}, value {}, max {}".format(j, old_var[i][j], max_old[j]))
+                t = 1.
+            elif t < -1:
+                if verbose:
+                    print("Exceeding min in posterior dim {}, value {}, min {}".format(j, old_var[i][j], min_old[j]))
+                t = -1
+            new.append(t)
+        rescale_var.append(new)
+
+    return torch.tensor(rescale_var)

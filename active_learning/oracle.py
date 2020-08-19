@@ -58,7 +58,7 @@ class OracleAgent:
         eval_list = []
 
         for j in range(training_iter):
-            envs_kwargs, curr_latent = task_generator.sample_single_task(self.num_processes)
+            envs_kwargs, curr_latent = task_generator.sample_task(self.num_processes)
 
             envs = make_vec_envs_multi_task(env_name,
                                             seed,
@@ -105,7 +105,7 @@ class OracleAgent:
                         rollouts_multi_task.obs[-1], rollouts_multi_task.recurrent_hidden_states[-1],
                         rollouts_multi_task.masks[-1]).detach()
 
-                rollouts_multi_task.compute_returns(next_value, self.use_gae, 1,
+                rollouts_multi_task.compute_returns(next_value, self.use_gae, self.gamma,
                                                     self.gae_lambda, self.use_proper_time_limits)
 
                 self.agent.update(rollouts_multi_task)
@@ -129,7 +129,7 @@ class OracleAgent:
         r_epi_list = []
 
         for _ in range(n_iter):
-            envs_kwargs, curr_latent = task_generator.sample_single_task(self.num_processes)
+            envs_kwargs, curr_latent = task_generator.sample_task(self.num_processes)
 
             eval_envs = make_vec_envs_multi_task(env_name,
                                                  seed + self.num_processes,

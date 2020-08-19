@@ -208,16 +208,17 @@ def make_vec_envs_multi_task(env_name,
     ]
 
     if len(envs) > 1:
+        # TODO fix for unix machines
         envs = DummyVecEnv(envs)
         # envs = ShmemVecEnv(envs)
     else:
         envs = DummyVecEnv(envs)
 
-    if len(envs.observation_space.shape) == 1:
-        if gamma is None:
-            envs = VecNormalize(envs, ret=False)
-        else:
-            envs = VecNormalize(envs, gamma=gamma)
+    # if len(envs.observation_space.shape) == 1:
+    #    if gamma is None:
+    #        envs = VecNormalize(envs, ret=False)
+    #    else:
+    #        envs = VecNormalize(envs, gamma=gamma)
 
     envs = VecPyTorch(envs, device)
 

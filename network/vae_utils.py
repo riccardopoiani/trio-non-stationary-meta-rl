@@ -4,6 +4,8 @@ import torch.nn.functional as F
 
 def loss_inference_closed_form(z, mu_hat, logvar_hat, mu_prior, logvar_prior, epoch, verbose):
     mse = torch.mean(torch.sum(logvar_hat.exp(), 1)) + F.mse_loss(mu_hat, z)
+    # mse = torch.mean(torch.sum(logvar_hat.exp(), 1)) + F.l1_loss(mu_hat, z)
+    # mse = F.l1_loss(mu_hat, z)
 
     if epoch == -1:
         print("Mu hat {}".format(mu_hat))
@@ -19,11 +21,12 @@ def loss_inference_closed_form(z, mu_hat, logvar_hat, mu_prior, logvar_prior, ep
 
     kld = (1 / 2) * torch.mean(kdl_1 + kld_2)
 
+    # if verbose and epoch % 100 == 0:
+    #    print("Epoch {} L1 loss {}".format(epoch, mse.item()))
     if verbose and epoch is not None and epoch % 100 == 0:
-        print("MSE {}".format(mse.item()))
-        print("KLD {}".format(kld.item()))
-
+        print("Epoch {} MSE {} KLD {}".format(epoch, mse.item(), kld.item()))
     return mse + kld, kld.item(), mse.item()
+    # return mse, mse.item(), mse.item()
 
 
 # Define the training procedure
