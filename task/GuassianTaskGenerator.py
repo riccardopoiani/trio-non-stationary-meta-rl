@@ -71,6 +71,22 @@ class GaussianTaskGenerator(TaskGenerator):
 
         return envs_kwargs, curr_latent
 
+    def sample_task_from_prior(self, prior):
+        mu = prior[0].clone().detach()
+        var = prior[1].clone().detach()
+
+        task_param = torch.normal(mu, var)
+
+        envs_kwargs = {'amplitude': self.amplitude,
+                       'mean': task_param.item(),
+                       'std': self.std,
+                       'noise_std': 0.001,
+                       'min_x': self.x_min,
+                       'max_x': self.x_max,
+                       'scale_reward': False}
+
+        return envs_kwargs
+
     def sample_pair_tasks_data_loader(self, num_processes):
         # Choose pair of init task and distribution for the next task
         task_idx = torch.randint(low=0, high=self.n_tasks, size=(num_processes,))
