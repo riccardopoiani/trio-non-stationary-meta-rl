@@ -81,9 +81,9 @@ class PosteriorMTAgent:
               eval_interval, num_random_task_to_eval, init_vae_steps,
               num_vae_steps, num_test_processes, use_true_sigma,
               prior_sequences=None, gp_list_sequences=None, sw_size=None,
-              meta_test_prior_sequences=None, init_prior_test_sequences=None,
+              init_prior_test_sequences=None,
               log_dir=".", use_env_obs=False, verbose=True, use_data_loader=False):
-        assert len(meta_test_prior_sequences) == len(init_prior_test_sequences)
+        assert len(prior_sequences) == len(init_prior_test_sequences)
 
         eval_list = []
         test_list = []
@@ -391,7 +391,7 @@ class PosteriorMTAgent:
         print("Evaluation using {} tasks. Mean reward: {}".format(num_task_to_evaluate, np.mean(r_epi_list)))
         return np.mean(r_epi_list)
 
-    def evaluate_task(self, envs_kwargs, prior, num_task_to_evaluate, task_generator, log_dir, seed, use_env_obs,
+    def evaluate_task(self, envs_kwargs, prior, num_task_to_evaluate, log_dir, seed, use_env_obs,
                       env_name):
         assert num_task_to_evaluate % self.num_processes == 0
 

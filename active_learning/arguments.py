@@ -7,7 +7,7 @@ def get_args():
     parser = argparse.ArgumentParser(description="AL")
 
     parser.add_argument("--algo", default="oracle",
-                        help="algorithm to use: oracle | fixed_id | posterior_multi_task | ours"
+                        help="algorithm to use: gp_ts | ours| ts_posterior | rl2 "
                              "new_posterior_multi_task")
 
     # RL parameters
@@ -55,6 +55,8 @@ def get_args():
     parser.add_argument('--n-restarts-gp', default=1, type=int, help="number of restarts for GP at meta-test time")
     parser.add_argument('--alpha-gp', default=0.25, type=float, help="alpha parameter for GP at meta-test time")
     parser.add_argument('--sw-gp', default=10, type=int, help="GP will use only the last sw number of samples")
+    parser.add_argument('--use-true-sigma', default=True, type=bool, help="Whether to use the variance coming GP"
+                                                                          "or use a robust max variance")
 
     # Variational inference
     parser.add_argument('--num-vae-steps', default=1, type=int, help="number of variational steps for each ppo update")
@@ -79,6 +81,6 @@ def get_args():
 
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
-    assert args.algo in ['oracle', 'fixed_id', 'posterior_multi_task', 'ours', 'new_posterior_multi_task']
+    assert args.algo in ['gp_ts', 'ours', 'ts_posterior', 'rl2']
 
     return args

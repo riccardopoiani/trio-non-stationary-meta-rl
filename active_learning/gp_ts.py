@@ -1,4 +1,5 @@
 import numpy as np
+import gym
 
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Product, ConstantKernel as C
@@ -74,10 +75,10 @@ class GaussianProcessThompsonSampling:
 
         return r
 
-    def meta_test(self, test_env_sequences, verbose=True):
+    def meta_test(self, task_generator, prior_sequences, env_name, verbose=True):
         log = []
 
-        for i, sequence in enumerate(test_env_sequences):
+        for i, sequence in enumerate(prior_sequences):
             if verbose:
                 print("Sequence {} in {}")
 
@@ -85,12 +86,15 @@ class GaussianProcessThompsonSampling:
 
             r_sequence = []
 
-            for env in sequence:
+            for p in sequence:
+                kwargs = task_generator.sample_task_from_prior(p)
+                env = gym.make(env_name, **kwargs)
                 r_sequence.append(self.solve_task(env))
 
             log.append(r_sequence)
 
         return log
+
 
 
 
