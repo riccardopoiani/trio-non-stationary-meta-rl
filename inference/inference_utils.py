@@ -59,7 +59,7 @@ def train_inference_network_family(net, optimizer, epoch, n_tasks, data_set, par
         context = torch.empty(n_batch, num_data_context, 2)
         prev_task = torch.empty(n_batch, 2)
 
-        # Retrieving data to be fed to the network
+        # Retrieving data to be fed to the inference
         i = 0
         for t_idx, task in enumerate(task_loader):
             # Creating new task
@@ -71,7 +71,7 @@ def train_inference_network_family(net, optimizer, epoch, n_tasks, data_set, par
             prior[i][0:2] = prev_task[i] + prior[i][0:2].clone().detach()
             mu_prior[i] = prev_task[i] + mu_prior[i].clone().detach()
 
-            # Creating context to be fed to the network
+            # Creating context to be fed to the inference
             batch = task[k]['train']
             batch = torch.cat([batch[0], batch[1]], dim=1)
             context[i] = batch[ctx_idx]

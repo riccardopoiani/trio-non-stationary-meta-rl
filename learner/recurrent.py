@@ -3,7 +3,7 @@ import numpy as np
 from functools import reduce
 
 from ppo_a2c.algo.ppo import PPO
-from ppo_a2c.envs import make_vec_envs_multi_task
+from ppo_a2c.envs import get_vec_envs_multi_task
 from ppo_a2c.model import MLPBase, Policy
 from ppo_a2c.storage import RolloutStorage
 
@@ -44,6 +44,8 @@ class RL2:
                          eps=eps,
                          max_grad_norm=max_grad_norm,
                          use_clipped_value_loss=True)
+        self.envs = None
+        self.eval_envs = None
 
     def train(self, n_iter, env_name, seed, task_generator,
               eval_interval, num_test_processes, num_random_task_to_eval,
@@ -55,15 +57,21 @@ class RL2:
         for i in range(n_iter):
             self.train_iter(env_name=env_name, seed=seed, task_generator=task_generator, log_dir=log_dir)
 
+            if i % 10 == 0:
+                print("Iteration {} / {}".format(i, n_iter))
+
             if i % eval_interval == 0:
-                if verbose:
-                    print("Iteration {} / {}".format(i, n_iter))
+                # if verbose:
+                #    print("Iteration {} / {}".format(i, n_iter))
                 e = self.evaluate(num_task_to_evaluate=num_random_task_to_eval, task_generator=task_generator,
                                   log_dir=log_dir, seed=seed, env_name=env_name)
                 eval_list.append(e)
 
                 e = self.meta_test(prior_task_sequences, task_generator, num_test_processes, env_name, seed, log_dir)
                 test_list.append(e)
+
+        self.envs.close()
+        self.eval_envs.close()
 
         return eval_list, test_list
 
@@ -81,10 +89,10 @@ class RL2:
 
     def train_iter(self, env_name, seed, task_generator, log_dir):
         envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-        envs = make_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
-                                        False, envs_kwargs, num_frame_stack=None)
+        self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
+                                            True, envs_kwargs, self.envs, num_frame_stack=None)
 
-        obs = envs.reset()
+        obs = self.envs.reset()
         obs = self.build_obs(obs=obs, reward=None, action=None, is_init=True, use_obs_env=self.use_obs_env,
                              num_processes=self.num_processes)
 
@@ -103,7 +111,7 @@ class RL2:
                     rollouts_multi_task.masks[step])
 
             # Observe reward and next obs
-            obs, reward, done, infos = envs.step(action)
+            obs, reward, done, infos = self.envs.step(action)
             obs = self.build_obs(obs=obs, reward=reward, action=action, is_init=False, use_obs_env=self.use_obs_env,
                                  num_processes=self.num_processes)
 
@@ -133,12 +141,12 @@ class RL2:
 
         for _ in range(n_iter):
             envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            eval_envs = make_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
-                                                 False, envs_kwargs, num_frame_stack=None)
+            self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
+                                                True, envs_kwargs, self.envs, num_frame_stack=None)
 
             eval_episode_rewards = []
 
-            obs = eval_envs.reset()
+            obs = self.envs.reset()
             obs = self.build_obs(obs=obs, reward=None, action=None, is_init=True, use_obs_env=self.use_obs_env,
                                  num_processes=self.num_processes)
 
@@ -155,7 +163,7 @@ class RL2:
                         deterministic=False)
 
                 # Observe reward and next obs
-                obs, reward, done, infos = eval_envs.step(action)
+                obs, reward, done, infos = self.envs.step(action)
                 obs = self.build_obs(obs=obs, reward=reward, action=action, is_init=False, use_obs_env=self.use_obs_env,
                                      num_processes=self.num_processes)
 
@@ -170,7 +178,6 @@ class RL2:
                         eval_episode_rewards.append(total_epi_reward)
 
             r_epi_list.append(eval_episode_rewards)
-            eval_envs.close()
 
         r_epi_list = reduce(list.__add__, r_epi_list)
         print("Evaluation using {} tasks. Mean reward: {}".format(num_task_to_evaluate, np.mean(r_epi_list)))
@@ -185,12 +192,12 @@ class RL2:
             for prior in sequence:
                 kwargs = task_generator.sample_task_from_prior(prior)
                 temp = [kwargs for _ in range(num_test_processes)]
-                eval_envs = make_vec_envs_multi_task(env_name, seed, num_test_processes, self.gamma, log_dir,
-                                                     self.device, False, temp, num_frame_stack=None)
+                self.eval_envs = get_vec_envs_multi_task(env_name, seed, num_test_processes, self.gamma, log_dir,
+                                                         self.device, True, temp, self.eval_envs, num_frame_stack=None)
 
                 eval_episode_rewards = []
 
-                obs = eval_envs.reset()
+                obs = self.eval_envs.reset()
                 obs = self.build_obs(obs=obs, reward=None, action=None, is_init=True, use_obs_env=self.use_obs_env,
                                      num_processes=num_test_processes)
 
@@ -207,7 +214,7 @@ class RL2:
                             deterministic=False)
 
                     # Observe reward and next obs
-                    obs, reward, done, infos = eval_envs.step(action)
+                    obs, reward, done, infos = self.eval_envs.step(action)
                     obs = self.build_obs(obs=obs, reward=reward, action=action, is_init=False,
                                          use_obs_env=self.use_obs_env, num_processes=num_test_processes)
 
@@ -220,11 +227,8 @@ class RL2:
                         if 'episode' in info.keys():
                             total_epi_reward = info['episode']['r']
                             eval_episode_rewards.append(total_epi_reward)
-                eval_envs.close()
                 sequence_rewards.append(np.mean(eval_episode_rewards))
 
             result_all.append(sequence_rewards)
 
         return result_all
-
-

@@ -2,55 +2,135 @@ import pickle
 
 import numpy as np
 import torch
+import gym_sin
 from gym import spaces
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
-from active_learning.PosteriorTS import PosteriorTSAgent
-from active_learning.arguments import get_args
-from active_learning.gp_ts import GaussianProcessThompsonSampling
-from active_learning.posterior_multi_task import PosteriorMTAgent
-from active_learning.recurrent import RL2
-from network.vae import InferenceNetworkNoPrev
+from learner.posterior_thompson_sampling import PosteriorTSAgent
+from utilities.arguments import get_args
+from learner.gp_ts import GaussianProcessThompsonSampling
+from learner.posterior_multi_task import PosteriorMTAgent
+from learner.recurrent import RL2
+from inference.inference_network import InferenceNetwork
 from task.GuassianTaskGenerator import GaussianTaskGenerator
 from utilities.folder_management import handle_folder_creation
 
 
-def get_task_sequence(alpha, n_restarts, num_test_processes):
+def get_const_task_sequence(alpha, n_restarts, num_test_processes, std):
     kernel = C(1.0, (1e-5, 1e5)) * RBF(1, (1e-5, 1e5))
 
     gp_list = []
-    for i in range(2):
+    for i in range(num_test_processes):
         gp_list.append([GaussianProcessRegressor(kernel=kernel,
                                                  alpha=alpha ** 2,
                                                  normalize_y=True,
                                                  n_restarts_optimizer=n_restarts)
                         for _ in range(num_test_processes)])
-    test_kwargs = []
-    init_prior_test = [torch.tensor([[15, 30], [4, 4]], dtype=torch.float32) for _ in range(num_test_processes)]
+    init_prior_test = [torch.tensor([[-10], [5]], dtype=torch.float32) for _ in range(num_test_processes)]
 
-    for idx in range(50):
+    mean = -5
+
+    prior_seq = []
+    for idx in range(15):
+        prior_seq.append(torch.tensor([[mean], [std]], dtype=torch.float32))
+
+    return gp_list, prior_seq, init_prior_test
+
+
+def get_linear_task_sequence(alpha, n_restarts, num_test_processes, std):
+    kernel = C(1.0, (1e-5, 1e5)) * RBF(1, (1e-5, 1e5))
+
+    gp_list = []
+    for i in range(num_test_processes):
+        gp_list.append([GaussianProcessRegressor(kernel=kernel,
+                                                 alpha=alpha ** 2,
+                                                 normalize_y=True,
+                                                 n_restarts_optimizer=n_restarts)
+                        for _ in range(num_test_processes)])
+    init_prior_test = [torch.tensor([[30], [5]], dtype=torch.float32) for _ in range(num_test_processes)]
+
+    prior_seq = []
+    for idx in range(20):
+        mean = 30 - idx
+
+        prior_seq.append(torch.tensor([[mean], [std]], dtype=torch.float32))
+
+    return gp_list, prior_seq, init_prior_test
+
+
+def get_phase_task_sequence(alpha, n_restarts, num_test_processes, std):
+    kernel = C(1.0, (1e-5, 1e5)) * RBF(1, (1e-5, 1e5))
+
+    gp_list = []
+    for i in range(num_test_processes):
+        gp_list.append([GaussianProcessRegressor(kernel=kernel,
+                                                 alpha=alpha ** 2,
+                                                 normalize_y=True,
+                                                 n_restarts_optimizer=n_restarts)
+                        for _ in range(num_test_processes)])
+    init_prior_test = [torch.tensor([[-5], [5]], dtype=torch.float32) for _ in range(num_test_processes)]
+
+    prior_seq = []
+    for idx in range(40):
         if idx < 15:
-            mean = 15
-            std = 30
-        elif idx > 40:
-            mean = 40
-            std = 30
+            mean = 0
+        elif idx < 30:
+            mean = 10
         else:
-            mean = 15 + idx
-            std = 30 - idx / 16
+            mean = 0
 
-        test_kwargs.append({'amplitude': 1,
-                            'mean': mean,
-                            'std': std,
-                            'noise_std': 0.001,
-                            'scale_reward': False})
+        prior_seq.append(torch.tensor([[mean], [std]], dtype=torch.float32))
 
-    return gp_list, test_kwargs, init_prior_test
+    return gp_list, prior_seq, init_prior_test
 
 
-def get_sequences():
-    return [], [], []
+def get_abrupt_and_smooth(alpha, n_restarts, num_test_processes, std):
+    kernel = C(1.0, (1e-5, 1e5)) * RBF(1, (1e-5, 1e5))
+
+    gp_list = []
+    for i in range(num_test_processes):
+        gp_list.append([GaussianProcessRegressor(kernel=kernel,
+                                                 alpha=alpha ** 2,
+                                                 normalize_y=True,
+                                                 n_restarts_optimizer=n_restarts)
+                        for _ in range(num_test_processes)])
+    init_prior_test = [torch.tensor([[-30], [5]], dtype=torch.float32) for _ in range(num_test_processes)]
+    prior_seq = []
+
+    for idx in range(60):
+        if idx < 15:
+            mean = -30
+        elif idx < 50:
+            mean = -20 + (idx - 15)
+        else:
+            mean = -20 + 50 - 15
+
+        prior_seq.append(torch.tensor([[mean], [std]], dtype=torch.float32))
+
+    return gp_list, prior_seq, init_prior_test
+
+
+def get_sequences(alpha, n_restarts, num_test_processes, std):
+    # Retrieve task
+    gp_list_const, prior_seq_const, init_prior_const = get_const_task_sequence(alpha, n_restarts,
+                                                                               num_test_processes, std)
+    gp_list_linear, prior_seq_linear, init_prior_linear = get_const_task_sequence(alpha, n_restarts,
+                                                                                  num_test_processes,
+                                                                                  std)
+    gp_list_phase, prior_seq_phase, init_prior_phase = get_phase_task_sequence(alpha, n_restarts, num_test_processes,
+                                                                               std)
+    gp_list_both, prior_seq_both, init_prior_both = get_abrupt_and_smooth(alpha, n_restarts, num_test_processes, std)
+
+    # Fill lists
+    prior_sequences = [prior_seq_const, prior_seq_linear, prior_seq_phase, prior_seq_both]
+    gp_list_sequences = [gp_list_const, gp_list_linear, gp_list_phase, gp_list_both]
+    init_prior = [init_prior_const, init_prior_linear, init_prior_phase, init_prior_both]
+    # gp_list_sequences = [gp_list_const]
+    # prior_sequences = [prior_seq_const]
+    # init_prior = [init_prior_const]
+
+    return prior_sequences, gp_list_sequences, init_prior
 
 
 def main():
@@ -61,8 +141,8 @@ def main():
     latent_dim = 1
     x_min = -100
     x_max = 100
-    min_mean = -70
-    max_mean = 70
+    min_mean = -60
+    max_mean = 60
     prior_mu_min = -10
     prior_mu_max = 10
     prior_std_min = 1
@@ -83,14 +163,26 @@ def main():
     torch.set_num_threads(1)
     device = torch.device("cuda:0" if args.cuda else "cpu")
 
-    task_generator = GaussianTaskGenerator(x_min, x_max, min_mean, max_mean,
-                                           prior_mu_min, prior_mu_max, prior_std_min, prior_std_max, std, amplitude)
-    task_generator.create_task_family(n_tasks=n_tasks, n_batches=1, test_perc=0, batch_size=1)
+    task_generator = GaussianTaskGenerator(x_min=x_min, x_max=x_max, min_mean=min_mean, max_mean=max_mean,
+                                           prior_mu_min=prior_mu_min,
+                                           prior_mu_max=prior_mu_max,
+                                           prior_std_min=prior_std_min,
+                                           prior_std_max=prior_std_max,
+                                           std=std,
+                                           amplitude=amplitude)
+    task_generator.create_task_family(n_tasks=n_tasks, n_batches=1, test_perc=0,
+                                      batch_size=150 if args.use_data_loader else 1)
 
-    folder = folder + args.algo
+    if len(args.folder) == 0:
+        folder = folder + args.algo + "/"
+    else:
+        folder = folder + args.folder + "/"
     fd, folder_path_with_date = handle_folder_creation(result_path=folder)
 
-    prior_sequences, gp_list_sequences, init_prior = get_sequences()
+    prior_sequences, gp_list_sequences, init_prior = get_sequences(alpha=args.alpha_gp,
+                                                                   n_restarts=args.n_restarts_gp,
+                                                                   num_test_processes=args.num_test_processes,
+                                                                   std=std)
 
     if args.algo == 'rl2':
         obs_shape = (2,)
@@ -102,8 +194,8 @@ def main():
                     num_mini_batch=args.num_mini_batch,
                     value_loss_coef=args.value_loss_coef,
                     entropy_coef=args.entropy_coef,
-                    lr=args.lr,
-                    eps=args.eps,
+                    lr=args.ppo_lr,
+                    eps=args.ppo_eps,
                     max_grad_norm=args.max_grad_norm,
                     action_space=action_space,
                     obs_shape=obs_shape,
@@ -135,15 +227,15 @@ def main():
 
         torch.save(agent.actor_critic, "{}rl2_actor_critic".format(folder_path_with_date))
     elif args.algo == "ours":
-        max_old = [100, 50, 20, 20]
-        min_old = [-100, 0, 0, 0]
+        max_old = [100, 10]
+        min_old = [-100, 0]
         vae_min_seq = 1
         vae_max_seq = 150
 
-        obs_shape = (4,)
+        obs_shape = (2,)
 
-        vi = InferenceNetworkNoPrev(n_in=4, z_dim=latent_dim)
-        vi_optim = torch.optim.Adam(vi.parameters())
+        vi = InferenceNetwork(n_in=4, z_dim=latent_dim)
+        vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = PosteriorMTAgent(action_space=action_space, device=device, gamma=args.gamma,
                                  num_steps=args.num_steps, num_processes=args.num_processes,
@@ -181,19 +273,19 @@ def main():
                                                    seed=args.seed,
                                                    task_generator=task_generator,
                                                    eval_interval=args.eval_interval,
-                                                   log_dir=args.lod_dir,
+                                                   log_dir=args.log_dir,
                                                    use_env_obs=False,
                                                    num_vae_steps=args.num_vae_steps,
                                                    init_vae_steps=args.init_vae_steps,
                                                    sw_size=args.sw_size,
                                                    num_random_task_to_eval=args.num_random_task_to_eval,
                                                    num_test_processes=args.num_test_processes,
-                                                   use_true_sigma=args.use_true_sigma,
-                                                   use_data_loader=False,
+                                                   use_data_loader=args.use_data_loader,
                                                    gp_list_sequences=gp_list_sequences,
                                                    prior_sequences=prior_sequences,
                                                    init_prior_test_sequences=init_prior,
                                                    verbose=args.verbose,
+                                                   vae_smart=args.vae_smart
                                                    )
 
         with open("{}vae.pkl".format(folder_path_with_date), "wb") as output:
@@ -217,8 +309,8 @@ def main():
         with open("{}test".format(folder_path_with_date), "wb") as output:
             pickle.dump(r, output)
     elif args.algo == "ts_posterior":
-        vi = InferenceNetworkNoPrev(n_in=4, z_dim=latent_dim)
-        vi_optim = torch.optim.Adam(vi.parameters())
+        vi = InferenceNetwork(n_in=4, z_dim=latent_dim)
+        vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = PosteriorTSAgent(vi=vi,
                                  vi_optim=vi_optim,
@@ -243,8 +335,10 @@ def main():
                                                     sw_size=args.sw_size,
                                                     prior_sequences=prior_sequences,
                                                     init_prior_sequences=init_prior,
-                                                    num_eval_processes=args.num_eval_processes,
-                                                    use_true_sigma=args.use_true_sigma)
+                                                    num_eval_processes=args.num_test_processes,
+                                                    use_true_sigma=args.use_true_sigma,
+                                                    use_data_loader=args.use_data_loader,
+                                                    vae_smart=args.vae_smart)
 
         with open("{}vi_loss".format(folder_path_with_date), "wb") as output:
             pickle.dump(vi_loss, output)

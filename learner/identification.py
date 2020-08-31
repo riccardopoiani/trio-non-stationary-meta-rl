@@ -2,16 +2,17 @@ import torch
 import numpy as np
 from functools import reduce
 
-from active_learning.observation_utils import oracle_augment_obs, al_augment_obs, get_posterior_no_prev, \
-    rescale_posterior, rescale_latent
-from active_learning.training_utils import get_reward, get_mse
-from network.vae_utils import loss_inference_closed_form
+from utilities.observation_utils import oracle_augment_obs, al_augment_obs, get_posterior_no_prev, \
+    rescale_latent
+from utilities.training_utils import get_reward, get_mse
+from inference.inference_utils import loss_inference_closed_form
 from ppo_a2c.algo.ppo import PPO
-from ppo_a2c.envs import make_vec_envs_multi_task
+from ppo_a2c.envs import get_vec_envs_multi_task
 from ppo_a2c.model import MLPBase, Policy
 from ppo_a2c.storage import RolloutStorage
 
 
+@DeprecationWarning
 class FixedIDAgent:
 
     def __init__(self, action_space, device, gamma, num_steps, num_processes,
@@ -99,7 +100,7 @@ class FixedIDAgent:
               log_dir=".", use_env_obs=False, verbose=True):
         if verbose:
             print("Training VI...")
-        # train variational network with data-loader
+        # train variational inference with data-loader
         self.train_vae(num_vae_steps=num_vae_steps, task_generator=task_generator,
                        verbose=verbose)
 
@@ -146,7 +147,7 @@ class FixedIDAgent:
             context = torch.empty(self.num_processes, num_data_context, 2)
 
             for t_idx in range(self.num_processes):
-                # Creating context to be fed to the network
+                # Creating context to be fed to the inference
                 batch = data[t_idx][0]['train']
                 batch = torch.cat([batch[0], batch[1]], dim=1)
                 context[t_idx] = batch[ctx_idx]
@@ -173,8 +174,8 @@ class FixedIDAgent:
         for curr_iter in range(n_iter):
             # Sample task and create envs
             envs_kwargs, _, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            envs = make_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
-                                            False, envs_kwargs, num_frame_stack=None)
+            envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
+                                           False, envs_kwargs, num_frame_stack=None)
 
             # Multi-task learning with posterior mean
             obs = envs.reset()
@@ -239,9 +240,9 @@ class FixedIDAgent:
 
         for _ in range(n_iter):
             envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            eval_envs = make_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir,
-                                                 self.device,
-                                                 False, envs_kwargs, num_frame_stack=None)
+            eval_envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir,
+                                                self.device,
+                                                False, envs_kwargs, num_frame_stack=None)
 
             eval_episode_rewards = []
 
@@ -295,15 +296,15 @@ class FixedIDAgent:
         for k in range(n_iter):
             envs_kwargs, _, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
 
-            envs = make_vec_envs_multi_task(env_name,
-                                            seed,
-                                            self.num_processes,
-                                            None,
-                                            log_dir,
-                                            self.device,
-                                            False,
-                                            envs_kwargs,
-                                            num_frame_stack=None)
+            envs = get_vec_envs_multi_task(env_name,
+                                           seed,
+                                           self.num_processes,
+                                           None,
+                                           log_dir,
+                                           self.device,
+                                           False,
+                                           envs_kwargs,
+                                           num_frame_stack=None)
 
             obs = envs.reset()
             obs = al_augment_obs(obs=obs, latent_dim=self.latent_dim, posterior=prior_list,
@@ -391,15 +392,15 @@ class FixedIDAgent:
         for _ in range(n_iter):
             envs_kwargs, _, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
 
-            eval_envs = make_vec_envs_multi_task(env_name,
-                                                 seed,
-                                                 self.num_processes,
-                                                 None,
-                                                 log_dir,
-                                                 self.device,
-                                                 False,
-                                                 envs_kwargs,
-                                                 num_frame_stack=None)
+            eval_envs = get_vec_envs_multi_task(env_name,
+                                                seed,
+                                                self.num_processes,
+                                                None,
+                                                log_dir,
+                                                self.device,
+                                                False,
+                                                envs_kwargs,
+                                                num_frame_stack=None)
 
             obs = eval_envs.reset()
 
@@ -484,8 +485,8 @@ class FixedIDAgent:
         for t, kwargs in enumerate(envs_kwargs_list):
             # Task creation
             temp = [kwargs for _ in range(num_eval_processes)]
-            eval_envs = make_vec_envs_multi_task(env_name, seed, num_eval_processes, self.gamma, log_dir, self.device,
-                                                 False, temp, num_frame_stack=None)
+            eval_envs = get_vec_envs_multi_task(env_name, seed, num_eval_processes, self.gamma, log_dir, self.device,
+                                                False, temp, num_frame_stack=None)
 
             obs = eval_envs.reset()
             obs = al_augment_obs(obs, self.latent_dim, prior, prior,

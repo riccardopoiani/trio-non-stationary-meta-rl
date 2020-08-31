@@ -8,7 +8,7 @@ from joblib import Parallel, delayed
 
 from learner.BasicLearner import BasicLearner
 from learner.LearnPerturbationMAML import PerturbatedMAML, LearnPerturbationMAML
-from network.meta_network import MetaNetworkWithPertubation, NoisyMetaNetwork
+from inference.meta_network import MetaNetworkWithPertubation, NoisyMetaNetwork
 from task.TaskGenerator import SinTaskGenerator
 from utilities.folder_management import handle_folder_creation
 

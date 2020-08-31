@@ -17,7 +17,7 @@ class GaussianProcessThompsonSampling:
         self.sigmas = np.ones(len(self.arms)) * self.init_std_dev
         self.means = np.zeros(len(self.arms))
 
-        self.kernel: Product = C(1.0, (1e-5, 1e5)) * RBF(1.0, (1e-5, 1e5))
+        self.kernel = C(1.0, (1e-5, 1e5)) * RBF(1.0, (1e-5, 1e5))
         self.alpha = alpha
         self.n_restarts_optimizer = n_restart_opt
 

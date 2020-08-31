@@ -3,9 +3,9 @@ import torch
 
 from functools import reduce
 
-from active_learning.observation_utils import oracle_augment_obs
+from utilities.observation_utils import oracle_augment_obs
 from ppo_a2c.algo.ppo import PPO
-from ppo_a2c.envs import make_vec_envs_multi_task
+from ppo_a2c.envs import get_vec_envs_multi_task
 from ppo_a2c.model import MLPBase, Policy
 from ppo_a2c.storage import RolloutStorage
 
@@ -60,15 +60,15 @@ class OracleAgent:
         for j in range(training_iter):
             envs_kwargs, curr_latent = task_generator.sample_task(self.num_processes)
 
-            envs = make_vec_envs_multi_task(env_name,
-                                            seed,
-                                            self.num_processes,
-                                            self.gamma,
-                                            log_dir,
-                                            self.device,
-                                            False,
-                                            envs_kwargs,
-                                            num_frame_stack=None)
+            envs = get_vec_envs_multi_task(env_name,
+                                           seed,
+                                           self.num_processes,
+                                           self.gamma,
+                                           log_dir,
+                                           self.device,
+                                           False,
+                                           envs_kwargs,
+                                           num_frame_stack=None)
             obs = envs.reset()
             obs = oracle_augment_obs(obs=obs, latent=curr_latent,
                                      latent_dim=self.latent_dim, use_env_obs=use_env_obs)
@@ -131,15 +131,15 @@ class OracleAgent:
         for _ in range(n_iter):
             envs_kwargs, curr_latent = task_generator.sample_task(self.num_processes)
 
-            eval_envs = make_vec_envs_multi_task(env_name,
-                                                 seed + self.num_processes,
-                                                 self.num_processes,
-                                                 None,
-                                                 log_dir,
-                                                 self.device,
-                                                 False,
-                                                 envs_kwargs,
-                                                 num_frame_stack=None)
+            eval_envs = get_vec_envs_multi_task(env_name,
+                                                seed + self.num_processes,
+                                                self.num_processes,
+                                                None,
+                                                log_dir,
+                                                self.device,
+                                                False,
+                                                envs_kwargs,
+                                                num_frame_stack=None)
 
             eval_episode_rewards = []
 

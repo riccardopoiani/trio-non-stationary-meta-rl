@@ -3,10 +3,10 @@ from functools import reduce
 import numpy as np
 import torch
 
-from active_learning.observation_utils import augment_obs_posterior, get_posterior_no_prev, augment_obs_time
-from network.vae_utils import loss_inference_closed_form
+from utilities.observation_utils import augment_obs_posterior, get_posterior_no_prev, augment_obs_time
+from inference.inference_utils import loss_inference_closed_form
 from ppo_a2c.algo.ppo import PPO
-from ppo_a2c.envs import make_vec_envs_multi_task
+from ppo_a2c.envs import get_vec_envs_multi_task
 from ppo_a2c.model import MLPBase, Policy
 from ppo_a2c.storage import RolloutStorage
 
@@ -77,12 +77,15 @@ class PosteriorMTAgent:
                          max_grad_norm=max_grad_norm,
                          use_clipped_value_loss=True)
 
+        self.envs = None
+        self.eval_envs = None
+
     def train(self, training_iter, env_name, seed, task_generator,
               eval_interval, num_random_task_to_eval, init_vae_steps,
-              num_vae_steps, num_test_processes, use_true_sigma,
-              prior_sequences=None, gp_list_sequences=None, sw_size=None,
+              num_vae_steps, num_test_processes, prior_sequences=None, gp_list_sequences=None, sw_size=None,
               init_prior_test_sequences=None,
-              log_dir=".", use_env_obs=False, verbose=True, use_data_loader=False):
+              log_dir=".", use_env_obs=False, verbose=True, use_data_loader=False,
+              vae_smart=False):
         assert len(prior_sequences) == len(init_prior_test_sequences)
 
         eval_list = []
@@ -99,7 +102,14 @@ class PosteriorMTAgent:
 
         for k in range(training_iter):
             # Variational training step
-            if use_data_loader:
+            if vae_smart:
+                if np.random.rand() < 0.5:
+                    res_vae = self.vae_step_wrong_prior(num_vae_steps, use_env_obs, task_generator,
+                                                        env_name, seed, log_dir, verbose, False)
+                else:
+                    res_vae = self.vae_step(num_vae_steps, use_env_obs, task_generator, env_name, seed, log_dir,
+                                            verbose=verbose, init_vae=False)
+            elif use_data_loader:
                 res_vae = self.vae_step_data_loader(num_vae_steps, task_generator, verbose)
             else:
                 res_vae = self.vae_step(num_vae_steps, use_env_obs, task_generator, env_name, seed, log_dir,
@@ -108,9 +118,9 @@ class PosteriorMTAgent:
 
             # Optimal policy training step
             envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            envs = make_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
-                                            False, envs_kwargs, num_frame_stack=None)
-            self.multi_task_policy_step(envs, prev_task, prior, use_env_obs)
+            self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
+                                                True, envs_kwargs, self.envs, num_frame_stack=None)
+            self.multi_task_policy_step(prev_task, prior, use_env_obs)
 
             # Evaluation
             if eval_interval is not None and k % eval_interval == 0 and k > 1:
@@ -127,9 +137,11 @@ class PosteriorMTAgent:
                                              init_prior_sequences=init_prior_test_sequences,
                                              use_env_obs=use_env_obs,
                                              num_eval_processes=num_test_processes,
-                                             task_generator=task_generator,
-                                             use_true_sigma=use_true_sigma)
+                                             task_generator=task_generator)
                 test_list.append(e)
+
+        self.envs.close()
+        self.eval_envs.close()
 
         return eval_list, vae_list, test_list
 
@@ -157,7 +169,7 @@ class PosteriorMTAgent:
             context = torch.empty(self.num_processes, num_data_context, 2)
 
             for t_idx in range(self.num_processes):
-                # Creating context to be fed to the network
+                # Creating context to be fed to the inference
                 batch = data[t_idx][0]['train']
                 batch = torch.cat([batch[0], batch[1]], dim=1)
                 context[t_idx] = batch[ctx_idx]
@@ -178,29 +190,38 @@ class PosteriorMTAgent:
         else:
             return 0, 0, 0
 
-    def vae_step(self, num_vae_steps, use_env_obs, task_generator, env_name, seed, log_dir, verbose, init_vae):
+    def vae_step_wrong_prior(self, num_vae_steps, use_env_obs, task_generator, env_name, seed, log_dir, verbose,
+                             init_vae):
         train_loss = 0
         mse_train_loss = 0
         kdl_train_loss = 0
 
         for vae_step in range(num_vae_steps):
             envs_kwargs, prev_task, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            envs = make_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
-                                            False, envs_kwargs, num_frame_stack=None)
+            self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
+                                                True, envs_kwargs, self.envs, num_frame_stack=None)
+
+            _, _, prior_list_policy, _ = task_generator.sample_pair_tasks(self.num_processes)
+
             # Data structure for the loss function
-            prior = torch.empty(self.num_processes, 4)
-            mu_prior = torch.empty(self.num_processes, 2)
-            logvar_prior = torch.empty(self.num_processes, 2)
+            prior = torch.empty(self.num_processes, self.latent_dim * 2)
+            mu_prior = torch.empty(self.num_processes, self.latent_dim)
+            logvar_prior = torch.empty(self.num_processes, self.latent_dim)
+            prior_policy = torch.empty(self.num_processes, self.latent_dim * 2)
 
             for t_idx in range(self.num_processes):
-                prior[t_idx] = prior_list[t_idx].reshape(1, 4).squeeze(0).clone().detach()
+                prior[t_idx] = prior_list[t_idx].reshape(1, self.latent_dim * 2).squeeze(0).clone().detach()
                 mu_prior[t_idx] = prior_list[t_idx][0].clone().detach()
                 logvar_prior[t_idx] = prior_list[t_idx][1].clone().detach().log()
+                prior_policy[t_idx] = prior_list_policy[t_idx].reshape(1, self.latent_dim * 2).squeeze(
+                    0).clone().detach()
 
             # Sample data under the current policy
-            obs = envs.reset()
-            obs = augment_obs_posterior(obs, self.latent_dim, prior, use_env_obs, rescale_obs=self.rescale_obs,
-                                        max_old=self.max_old, min_old=self.min_old)
+            obs = self.envs.reset()
+            obs = augment_obs_posterior(obs, self.latent_dim, prior_policy, use_env_obs,
+                                        rescale_obs=self.rescale_obs, is_prior=True, max_old=self.max_old,
+                                        min_old=self.min_old)
+
             if self.use_time:
                 obs = augment_obs_time(obs=obs, time=0, rescale_time=self.rescale_time, max_time=self.max_time)
 
@@ -219,7 +240,7 @@ class PosteriorMTAgent:
                         _, action, _, _ = self.actor_critic.act(
                             rollouts_multi_task.obs[0], rollouts_multi_task.recurrent_hidden_states[0],
                             rollouts_multi_task.masks[0])
-                    _, reward, _, _ = envs.step(action)
+                    _, reward, _, _ = self.envs.step(action)
                     vae_action = _rescale_action(action, max_new=self.max_action, min_new=self.min_action)
                     context[:, step, 0] = vae_action.squeeze(1)
                     context[:, step, 1] = reward.squeeze(1)
@@ -233,12 +254,13 @@ class PosteriorMTAgent:
                             rollouts_multi_task.obs[step], rollouts_multi_task.recurrent_hidden_states[step],
                             rollouts_multi_task.masks[step])
 
-                    obs, reward, done, infos = envs.step(action)
+                    obs, reward, done, infos = self.envs.step(action)
                     posterior = get_posterior_no_prev(self.vae, action, reward, prior, max_action=self.max_action,
                                                       min_action=self.min_action, use_prev_state=use_prev_state)
                     obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                                 use_env_obs, rescale_obs=self.rescale_obs,
-                                                max_old=self.max_old, min_old=self.min_old)
+                                                max_old=self.max_old, min_old=self.min_old,
+                                                is_prior=False)
                     if self.use_time:
                         obs = augment_obs_time(obs=obs, time=step + 1, rescale_time=self.rescale_time,
                                                max_time=self.max_time)
@@ -266,16 +288,112 @@ class PosteriorMTAgent:
             self.vae_optim.step()
 
             if verbose and vae_step % 100 == 0:
-                print("Vae step {}/{}, mse {}, kdl {}".format(vae_step, num_vae_steps, mse, kdl))
+                print("Vae step {}/{}, mse {}, kdl {}, num steps {}".format(vae_step, num_vae_steps, mse, kdl,
+                                                                            num_data_context))
 
         return train_loss / num_vae_steps, mse_train_loss / num_vae_steps, kdl_train_loss / num_vae_steps
 
-    def multi_task_policy_step(self, envs, prev_task, prior, use_env_obs):
+    def vae_step(self, num_vae_steps, use_env_obs, task_generator, env_name, seed, log_dir, verbose, init_vae):
+        train_loss = 0
+        mse_train_loss = 0
+        kdl_train_loss = 0
+
+        for vae_step in range(num_vae_steps):
+            envs_kwargs, prev_task, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
+            self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
+                                                True, envs_kwargs, self.envs, num_frame_stack=None)
+            # Data structure for the loss function
+            prior = torch.empty(self.num_processes, self.latent_dim * 2)
+            mu_prior = torch.empty(self.num_processes, self.latent_dim)
+            logvar_prior = torch.empty(self.num_processes, self.latent_dim)
+
+            for t_idx in range(self.num_processes):
+                prior[t_idx] = prior_list[t_idx].reshape(1, self.latent_dim * 2).squeeze(0).clone().detach()
+                mu_prior[t_idx] = prior_list[t_idx][0].clone().detach()
+                logvar_prior[t_idx] = prior_list[t_idx][1].clone().detach().log()
+
+            # Sample data under the current policy
+            obs = self.envs.reset()
+            obs = augment_obs_posterior(obs, self.latent_dim, prior, use_env_obs, rescale_obs=self.rescale_obs,
+                                        is_prior=True, max_old=self.max_old, min_old=self.min_old)
+
+            if self.use_time:
+                obs = augment_obs_time(obs=obs, time=0, rescale_time=self.rescale_time, max_time=self.max_time)
+
+            rollouts_multi_task = RolloutStorage(self.num_steps, self.num_processes,
+                                                 self.obs_shape, self.action_space,
+                                                 self.actor_critic.recurrent_hidden_state_size)
+            rollouts_multi_task.obs[0].copy_(obs)
+            rollouts_multi_task.to(self.device)
+
+            num_data_context = torch.randint(low=self.vae_min_seq, high=self.vae_max_seq, size=(1,)).item()
+            context = torch.empty(self.num_processes, num_data_context, 2)
+
+            if init_vae:
+                for step in range(num_data_context):
+                    with torch.no_grad():
+                        _, action, _, _ = self.actor_critic.act(
+                            rollouts_multi_task.obs[0], rollouts_multi_task.recurrent_hidden_states[0],
+                            rollouts_multi_task.masks[0])
+                    _, reward, _, _ = self.envs.step(action)
+                    vae_action = _rescale_action(action, max_new=self.max_action, min_new=self.min_action)
+                    context[:, step, 0] = vae_action.squeeze(1)
+                    context[:, step, 1] = reward.squeeze(1)
+            else:
+                for step in range(num_data_context):
+                    use_prev_state = True if step > 0 else 0
+
+                    # Sample context under
+                    with torch.no_grad():
+                        value, action, action_log_prob, recurrent_hidden_states = self.actor_critic.act(
+                            rollouts_multi_task.obs[step], rollouts_multi_task.recurrent_hidden_states[step],
+                            rollouts_multi_task.masks[step])
+
+                    obs, reward, done, infos = self.envs.step(action)
+                    posterior = get_posterior_no_prev(self.vae, action, reward, prior, max_action=self.max_action,
+                                                      min_action=self.min_action, use_prev_state=use_prev_state)
+                    obs = augment_obs_posterior(obs, self.latent_dim, posterior,
+                                                use_env_obs, rescale_obs=self.rescale_obs,
+                                                max_old=self.max_old, min_old=self.min_old,
+                                                is_prior=False)
+                    if self.use_time:
+                        obs = augment_obs_time(obs=obs, time=step + 1, rescale_time=self.rescale_time,
+                                               max_time=self.max_time)
+                    vae_action = _rescale_action(action, max_new=self.max_action, min_new=self.min_action)
+                    context[:, step, 0] = vae_action.squeeze(1)
+                    context[:, step, 1] = reward.squeeze(1)
+
+                    # If done then clean the history of observations.
+                    masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
+                    bad_masks = torch.FloatTensor(
+                        [[0.0] if 'bad_transition' in info.keys() else [1.0] for info in infos])
+                    rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
+                                               action_log_prob, value, reward, masks, bad_masks)
+
+            # Now that data have been collected, we train the variational model
+            self.vae_optim.zero_grad()
+            z_hat, mu_hat, logvar_hat = self.vae(context, prior)
+
+            loss, kdl, mse = loss_inference_closed_form(new_tasks, mu_hat, logvar_hat, mu_prior, logvar_prior, None,
+                                                        verbose)
+            loss.backward()
+            train_loss += loss.item()
+            mse_train_loss += mse
+            kdl_train_loss += kdl
+            self.vae_optim.step()
+
+            if verbose and vae_step % 100 == 0:
+                print("Vae step {}/{}, mse {}, kdl {}, num steps {}".format(vae_step, num_vae_steps, mse, kdl,
+                                                                            num_data_context))
+
+        return train_loss / num_vae_steps, mse_train_loss / num_vae_steps, kdl_train_loss / num_vae_steps
+
+    def multi_task_policy_step(self, prev_task, prior, use_env_obs):
         # Multi-task learning with posterior mean
-        obs = envs.reset()
-        obs = augment_obs_posterior(obs, self.latent_dim, prior,
-                                    use_env_obs, rescale_obs=self.rescale_obs,
-                                    max_old=self.max_old, min_old=self.min_old)
+        obs = self.envs.reset()
+        obs = augment_obs_posterior(obs=obs, latent_dim=self.latent_dim, posterior=prior,
+                                    use_env_obs=use_env_obs, rescale_obs=self.rescale_obs,
+                                    max_old=self.max_old, min_old=self.min_old, is_prior=True)
         if self.use_time:
             obs = augment_obs_time(obs=obs, time=0, rescale_time=self.rescale_time, max_time=self.max_time)
 
@@ -297,12 +415,12 @@ class PosteriorMTAgent:
                     rollouts_multi_task.masks[step])
 
             # Observe reward and next obs
-            obs, reward, done, infos = envs.step(action)
+            obs, reward, done, infos = self.envs.step(action)
             posterior = get_posterior_no_prev(self.vae, action, reward, prior, max_action=self.max_action,
                                               min_action=self.min_action, use_prev_state=use_prev_state)
             obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                         use_env_obs, rescale_obs=self.rescale_obs,
-                                        max_old=self.max_old, min_old=self.min_old)
+                                        max_old=self.max_old, min_old=self.min_old, is_prior=False)
             if self.use_time:
                 obs = augment_obs_time(obs=obs, time=step + 1, rescale_time=self.rescale_time, max_time=self.max_time)
 
@@ -334,15 +452,15 @@ class PosteriorMTAgent:
 
         for _ in range(n_iter):
             envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            eval_envs = make_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
-                                                 False, envs_kwargs, num_frame_stack=None)
+            self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
+                                                True, envs_kwargs, self.envs, num_frame_stack=None)
 
             eval_episode_rewards = []
 
-            obs = eval_envs.reset()
+            obs = self.envs.reset()
             obs = augment_obs_posterior(obs, self.latent_dim, prior,
                                         use_env_obs, rescale_obs=self.rescale_obs,
-                                        max_old=self.max_old, min_old=self.min_old)
+                                        max_old=self.max_old, min_old=self.min_old, is_prior=True)
             if self.use_time:
                 obs = augment_obs_time(obs=obs, time=0, rescale_time=self.rescale_time, max_time=self.max_time)
 
@@ -361,13 +479,13 @@ class PosteriorMTAgent:
                         deterministic=False)
 
                 # Observe reward and next obs
-                obs, reward, done, infos = eval_envs.step(action)
+                obs, reward, done, infos = self.envs.step(action)
                 posterior = get_posterior_no_prev(self.vae, action, reward, prior,
                                                   min_action=self.min_action, max_action=self.max_action,
                                                   use_prev_state=use_prev_state)
                 obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                             use_env_obs, rescale_obs=self.rescale_obs,
-                                            max_old=self.max_old, min_old=self.min_old)
+                                            max_old=self.max_old, min_old=self.min_old, is_prior=False)
                 if self.use_time:
                     obs = augment_obs_time(obs=obs, time=step + 1, rescale_time=self.rescale_time,
                                            max_time=self.max_time)
@@ -385,7 +503,6 @@ class PosteriorMTAgent:
                         eval_episode_rewards.append(total_epi_reward)
 
             r_epi_list.append(eval_episode_rewards)
-            eval_envs.close()
 
         r_epi_list = reduce(list.__add__, r_epi_list)
         print("Evaluation using {} tasks. Mean reward: {}".format(num_task_to_evaluate, np.mean(r_epi_list)))
@@ -399,15 +516,15 @@ class PosteriorMTAgent:
 
         r_epi_list = []
 
-        eval_envs = make_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
-                                             False, envs_kwargs, num_frame_stack=None)
+        self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
+                                            True, envs_kwargs, self.envs, num_frame_stack=None)
 
         eval_episode_rewards = []
 
-        obs = eval_envs.reset()
+        obs = self.envs.reset()
         obs = augment_obs_posterior(obs, self.latent_dim, prior,
                                     use_env_obs, rescale_obs=self.rescale_obs,
-                                    max_old=self.max_old, min_old=self.min_old)
+                                    max_old=self.max_old, min_old=self.min_old, is_prior=True)
         if self.use_time:
             obs = augment_obs_time(obs=obs, time=0, rescale_time=self.rescale_time, max_time=self.max_time)
 
@@ -426,13 +543,13 @@ class PosteriorMTAgent:
                     deterministic=False)
 
             # Observe reward and next obs
-            obs, reward, done, infos = eval_envs.step(action)
+            obs, reward, done, infos = self.envs.step(action)
             posterior = get_posterior_no_prev(self.vae, action, reward, prior,
                                               min_action=self.min_action, max_action=self.max_action,
                                               use_prev_state=use_prev_state)
             obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                         use_env_obs, rescale_obs=self.rescale_obs,
-                                        max_old=self.max_old, min_old=self.min_old)
+                                        max_old=self.max_old, min_old=self.min_old, is_prior=False)
             if self.use_time:
                 obs = augment_obs_time(obs=obs, time=step + 1, rescale_time=self.rescale_time, max_time=self.max_time)
 
@@ -449,33 +566,41 @@ class PosteriorMTAgent:
                     eval_episode_rewards.append(total_epi_reward)
 
         r_epi_list.append(eval_episode_rewards)
-        eval_envs.close()
 
         print("Evaluation using {} tasks. Mean reward: {}".format(num_task_to_evaluate, np.mean(r_epi_list)))
         return np.mean(r_epi_list)
 
     def meta_test_sequences(self, gp_list_sequences, sw_size, env_name, seed, log_dir, prior_sequences,
-                            init_prior_sequences, use_env_obs, num_eval_processes, task_generator,
-                            use_true_sigma=False):
-        r_all = []
+                            init_prior_sequences, use_env_obs, num_eval_processes, task_generator):
+        r_all_true_sigma = []
+        r_all_false_sigma = []
         r_all_real_prior = []
         for seq_idx, s in enumerate(prior_sequences):
+            print("SEQ IDX {}".format(seq_idx))
             env_kwargs_list = [task_generator.sample_task_from_prior(s[i]) for i in range(len(s))]
 
             r, _, _ = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size, env_name, seed, log_dir,
                                               env_kwargs_list, init_prior_sequences[seq_idx],
-                                              use_env_obs, num_eval_processes, use_true_sigma, False)
-            print("Using GP {}".format(np.mean(r)))
-            r_all.append(np.mean(r))
+                                              use_env_obs, num_eval_processes, use_true_sigma=True,
+                                              use_real_prior=False)
+            print("Using GP True sigma {}".format(np.mean(r)))
+            r_all_true_sigma.append(r)
 
             r, _, _ = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size, env_name, seed, log_dir,
                                               env_kwargs_list, init_prior_sequences[seq_idx],
-                                              use_env_obs, num_eval_processes, use_true_sigma,
-                                              True, s)
-            r_all_real_prior.append(np.mean(r))
+                                              use_env_obs, num_eval_processes, use_true_sigma=False,
+                                              use_real_prior=False)
+            print("Using GP False sigma {}".format(np.mean(r)))
+            r_all_false_sigma.append(r)
+
+            r, _, _ = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size, env_name, seed, log_dir,
+                                              env_kwargs_list, init_prior_sequences[seq_idx],
+                                              use_env_obs, num_eval_processes, use_true_sigma=None,
+                                              use_real_prior=True, true_prior_sequence=s)
+            r_all_real_prior.append(r)
             print("Using real prior {}".format(np.mean(r)))
 
-        return r_all, r_all_real_prior
+        return r_all_true_sigma, r_all_false_sigma, r_all_real_prior
 
     def test_task_sequence(self, gp_list, sw_size, env_name, seed, log_dir, envs_kwargs_list, init_prior, use_env_obs,
                            num_eval_processes, use_true_sigma, use_real_prior, true_prior_sequence=None):
@@ -492,13 +617,14 @@ class PosteriorMTAgent:
         for t, kwargs in enumerate(envs_kwargs_list):
             # Task creation
             temp = [kwargs for _ in range(num_eval_processes)]
-            eval_envs = make_vec_envs_multi_task(env_name, seed, num_eval_processes, self.gamma, log_dir, self.device,
-                                                 False, temp, num_frame_stack=None)
+            self.eval_envs = get_vec_envs_multi_task(env_name, seed, num_eval_processes, self.gamma, log_dir,
+                                                     self.device,
+                                                     True, temp, self.eval_envs, num_frame_stack=None)
 
-            obs = eval_envs.reset()
+            obs = self.eval_envs.reset()
             obs = augment_obs_posterior(obs, self.latent_dim, prior,
                                         use_env_obs, rescale_obs=self.rescale_obs,
-                                        max_old=self.max_old, min_old=self.min_old)
+                                        max_old=self.max_old, min_old=self.min_old, is_prior=True)
 
             eval_recurrent_hidden_states = torch.zeros(
                 num_eval_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
@@ -517,13 +643,13 @@ class PosteriorMTAgent:
                         deterministic=False)
 
                 # Observe reward and next obs
-                obs, reward, done, infos = eval_envs.step(action)
+                obs, reward, done, infos = self.eval_envs.step(action)
                 posterior = get_posterior_no_prev(self.vae, action, reward, prior,
                                                   min_action=self.min_action, max_action=self.max_action,
                                                   use_prev_state=use_prev_state)
                 obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                             use_env_obs, rescale_obs=self.rescale_obs,
-                                            max_old=self.max_old, min_old=self.min_old)
+                                            max_old=self.max_old, min_old=self.min_old, is_prior=False)
 
                 use_prev_state = True
                 eval_masks = torch.tensor(
@@ -537,12 +663,11 @@ class PosteriorMTAgent:
                         task_epi_rewards.append(total_epi_reward)
 
             eval_episode_rewards.append(np.mean(task_epi_rewards))
-            eval_envs.close()
 
             # Retrieve new prior for the identified model so far
-            if use_real_prior and t+1 < len(true_prior_sequence):
-                prior = true_prior_sequence[t+1]
-            else:
+            if use_real_prior and t + 1 < len(true_prior_sequence):
+                prior = [true_prior_sequence[t + 1] for _ in range(num_eval_processes)]
+            elif not use_real_prior:
                 posterior_history[t, :, :] = posterior
                 x = np.atleast_2d(np.arange(t + 1)).T
                 for dim in range(self.latent_dim):

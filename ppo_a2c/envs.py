@@ -12,7 +12,6 @@ from baselines.common.vec_env import VecEnvWrapper, ShmemVecEnv
 from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
 from baselines.common.vec_env.vec_normalize import \
     VecNormalize as VecNormalize_
-from baselines.common.running_mean_std import RunningMeanStd
 from gym.spaces.box import Box
 
 try:
@@ -29,83 +28,6 @@ try:
     import pybullet_envs
 except ImportError:
     pass
-
-
-class FakeRewardSmoother:
-    def __init__(self):
-        pass
-
-    def step(self, reward):
-        return reward
-
-
-class AdvancedRewardSmoother:
-    def __init__(self, num_tot_envs, num_replicas, cliprew=10., gamma=0.99, epsilon=1e-8):
-        assert num_tot_envs % num_replicas == 0
-        num_envs = num_tot_envs // num_replicas
-
-        self.num_envs = num_envs
-        self.num_replicas = num_replicas
-        self.ret_rms_list = [RunningMeanStd(shape=()) for _ in range(num_envs)]
-
-        self.cliprew = cliprew
-        self.gamma = gamma
-        self.epsilon = epsilon
-
-        self.ret = np.zeros(num_tot_envs)
-
-    def step(self, rews, done):
-        rews = rews.numpy().squeeze(1)
-        self.ret = self.ret * self.gamma + rews
-
-        for i in range(self.num_envs):
-            self.ret_rms_list[i].update(self.ret[i * self.num_replicas: (i + 1) * self.num_replicas])
-
-        for i in range(self.num_envs):
-            rews[i * self.num_replicas: (i + 1) * self.num_replicas] = \
-                np.clip(rews[i * self.num_replicas: (i + 1) * self.num_replicas]
-                        / np.sqrt(self.ret_rms_list[i].var + self.epsilon), -self.cliprew, self.cliprew)
-
-        self.ret[done] = 0.
-
-        return torch.tensor(rews).reshape(self.num_envs * self.num_replicas, 1)
-
-    def reset(self):
-        self.ret = np.zeros(self.num_envs)
-
-
-class ObsSmoother:
-    def __init__(self, obs_shape, clipob=10., epsilon=1e-8):
-        self.clipob = clipob
-        self.epsilon = epsilon
-        self.ob_rms = RunningMeanStd(shape=obs_shape)
-
-    def step(self, obs):
-        obs = obs.numpy()
-        self.ob_rms.update(obs)
-        obs = np.clip((obs - self.ob_rms.mean) / np.sqrt(self.ob_rms.var + self.epsilon), -self.clipob, self.clipob)
-        return torch.tensor(obs)
-
-
-class RewardSmoother:
-    def __init__(self, num_envs, cliprew=10., gamma=0.99, epsilon=1e-8):
-        self.ret_rms = RunningMeanStd(shape=())
-        self.cliprew = cliprew
-        self.gamma = gamma
-        self.epsilon = epsilon
-        self.num_envs = num_envs
-        self.ret = np.zeros(num_envs)
-
-    def step(self, rews, done):
-        rews = rews.numpy().squeeze(1)
-        self.ret = self.ret * self.gamma + rews
-        self.ret_rms.update(self.ret)
-        rews = np.clip(rews / np.sqrt(self.ret_rms.var + self.epsilon), -self.cliprew, self.cliprew)
-        self.ret[done] = 0.
-        return torch.tensor(rews).reshape(self.num_envs, 1)
-
-    def reset(self):
-        self.ret = np.zeros(self.num_envs)
 
 
 def make_env_multi_task(env_id, seed, rank, log_dir, allow_early_resets, kwargs):
@@ -208,17 +130,10 @@ def make_vec_envs_multi_task(env_name,
     ]
 
     if len(envs) > 1:
-        # TODO fix for unix machines
         envs = DummyVecEnv(envs)
-        # envs = ShmemVecEnv(envs)
+        # envs = MyShmemVecEnv(envs)
     else:
         envs = DummyVecEnv(envs)
-
-    # if len(envs.observation_space.shape) == 1:
-    #    if gamma is None:
-    #        envs = VecNormalize(envs, ret=False)
-    #    else:
-    #        envs = VecNormalize(envs, gamma=gamma)
 
     envs = VecPyTorch(envs, device)
 
@@ -228,6 +143,26 @@ def make_vec_envs_multi_task(env_name,
         envs = VecPyTorchFrameStack(envs, 4, device)
 
     return envs
+
+
+def get_vec_envs_multi_task(env_name,
+                            seed,
+                            num_processes,
+                            gamma,
+                            log_dir,
+                            device,
+                            allow_early_resets,
+                            env_kwargs_list,
+                            env,
+                            num_frame_stack=None,
+                            ):
+    if env is None:
+        return make_vec_envs_multi_task(env_name, seed, num_processes, gamma, log_dir, device, allow_early_resets,
+                                        env_kwargs_list, num_frame_stack)
+    else:
+        for i in range(num_processes):
+            env.venv.envs[i].set_latent(**env_kwargs_list[i])
+        return env
 
 
 def make_vec_envs(env_name,
@@ -245,7 +180,7 @@ def make_vec_envs(env_name,
 
     if len(envs) > 1:
         envs = DummyVecEnv(envs)
-        # envs = ShmemVecEnv(envs)
+        # envs = MyShmemVecEnv(envs)
     else:
         envs = DummyVecEnv(envs)
 
@@ -418,3 +353,10 @@ class VecPyTorchFrameStack(VecEnvWrapper):
 
     def close(self):
         self.venv.close()
+
+
+class MyShmemVecEnv(ShmemVecEnv):
+
+    def __init__(self, env_fns, spaces=None, context='spawn'):
+        super(MyShmemVecEnv, self).__init__(env_fns, spaces, context)
+        self.envs = [e() for e in env_fns]
