@@ -2,19 +2,37 @@ import torch
 import numpy as np
 
 from functools import reduce
-from utilities.observation_utils import get_posterior_no_prev
+
+from ppo_a2c.algo.ppo import PPO
+from ppo_a2c.model import MLPBase, Policy
+from ppo_a2c.storage import RolloutStorage
+from utilities.observation_utils import get_posterior_no_prev, augment_obs_optimal, augment_obs_oracle
 from inference.inference_utils import loss_inference_closed_form
 from ppo_a2c.envs import get_vec_envs_multi_task
 
 
-class PosteriorTSAgent:
+def _rescale_action(action, max_new, min_new):
+    if max_new is not None or min_new is not None:
+        return (max_new - min_new) / (1 - (-1)) * (action - 1) + max_new
+    else:
+        return action
+
+
+class PosteriorOptTSAgent:
 
     def __init__(self, vi, vi_optim, num_steps, num_processes, device, gamma, latent_dim,
-                 use_env_obs, min_action, max_action, max_sigma, use_decay_kld, decay_kld):
+                 use_env_obs, min_action, max_action, max_sigma, action_space, obs_shape,
+                 clip_param, ppo_epoch, num_mini_batch, value_loss_coef,
+                 entropy_coef, lr, eps, max_grad_norm, use_linear_lr_decay, use_gae, gae_lambda,
+                 use_proper_time_limits, recurrent_policy, hidden_size, use_elu, rescale_obs, max_old, min_old,
+                 use_decay_kld, decay_kld_rate):
         # Inference inference
         self.vi = vi
         self.vi_optim = vi_optim
+        self.use_decay_kld = use_decay_kld
+        self.decay_kld_rate = decay_kld_rate
 
+        # General settings
         self.use_env_obs = use_env_obs
 
         self.min_action = min_action
@@ -22,24 +40,50 @@ class PosteriorTSAgent:
 
         self.max_sigma = max_sigma
 
-        self.use_decay_kld = use_decay_kld
-        self.decay_kld = decay_kld
-
         # General
         self.num_processes = num_processes
         self.device = device
         self.gamma = gamma
+        self.action_space = action_space
+        self.obs_shape = obs_shape
+        self.rescale_obs = rescale_obs
+        self.max_old = max_old
+        self.min_old = min_old
 
         # Env
         self.num_steps = num_steps
         self.latent_dim = latent_dim
+
+        # Optimal policy
+        self.use_linear_lr_decay = use_linear_lr_decay
+        self.use_gae = use_gae
+        self.gae_lambda = gae_lambda
+        self.use_proper_time_limits = use_proper_time_limits
+
+        base = MLPBase
+        self.actor_critic = Policy(self.obs_shape,
+                                   self.action_space, base=base,
+                                   base_kwargs={'recurrent': recurrent_policy,
+                                                'hidden_size': hidden_size,
+                                                'use_elu': use_elu})
+
+        self.agent = PPO(self.actor_critic,
+                         clip_param,
+                         ppo_epoch,
+                         num_mini_batch,
+                         value_loss_coef,
+                         entropy_coef,
+                         lr=lr,
+                         eps=eps,
+                         max_grad_norm=max_grad_norm,
+                         use_clipped_value_loss=True)
 
         self.envs = None
         self.eval_envs = None
 
     def train(self, n_train_iter, eval_interval, task_generator, env_name, seed, log_dir, verbose,
               num_random_task_to_evaluate, gp_list_sequences, sw_size, prior_sequences,
-              init_prior_sequences, num_eval_processes, use_data_loader, vae_smart):
+              init_prior_sequences, num_eval_processes, vae_smart):
         eval_list = []
         test_list = []
         vi_loss = []
@@ -47,16 +91,15 @@ class PosteriorTSAgent:
         for i in range(n_train_iter):
             if vae_smart:
                 if np.random.rand() < 0.5:
-                    loss = self.train_iter_smart(task_generator, env_name, seed, log_dir, i, verbose)
+                    loss = self.train_iter_vae_smart(task_generator, env_name, seed, log_dir, verbose, i)
                 else:
-                    loss = self.train_iter(task_generator, env_name, seed, log_dir, i, verbose)
-            elif use_data_loader:
-                loss = self.train_iter_data_loader(task_generator=task_generator, epoch=i,
-                                                   verbose=verbose)
+                    loss = self.train_iter_vae(task_generator, env_name, seed, log_dir, verbose, i)
             else:
-                loss = self.train_iter(task_generator, env_name, seed, log_dir, verbose)
+                loss = self.train_iter_vae(task_generator, env_name, seed, log_dir, verbose, i)
 
             vi_loss.append(loss)
+
+            self.train_multi_task_iter(task_generator, env_name, seed, log_dir)
 
             if i % eval_interval == 0:
                 print("Iteration {} / {}".format(i, n_train_iter))
@@ -79,54 +122,55 @@ class PosteriorTSAgent:
 
         return vi_loss, eval_list, test_list
 
-    def train_iter_data_loader(self, task_generator, epoch, verbose):
-        train_loss = 0
+    def train_multi_task_iter(self, task_generator, env_name, seed, log_dir):
+        envs_kwargs, _, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
+        self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
+                                            True, envs_kwargs, self.envs, num_frame_stack=None)
 
-        data, prev_task, prior_list, new_tasks = task_generator.sample_pair_tasks_data_loader(self.num_processes)
+        obs = self.envs.reset()
+        obs = augment_obs_oracle(obs=obs, latent_dim=self.latent_dim, tasks=new_tasks,
+                                 use_env_obs=self.use_env_obs, rescale_obs=self.rescale_obs,
+                                 max_old=self.max_old, min_old=self.min_old)
 
-        prior = torch.empty(self.num_processes, 2 * self.latent_dim)
-        mu_prior = torch.empty(self.num_processes, self.latent_dim)
-        logvar_prior = torch.empty(self.num_processes, self.latent_dim)
+        rollouts_multi_task = RolloutStorage(self.num_steps, self.num_processes,
+                                             self.obs_shape, self.action_space,
+                                             self.actor_critic.recurrent_hidden_state_size)
 
-        for t_idx in range(self.num_processes):
-            prior[t_idx] = prior_list[t_idx].reshape(1, 2 * self.latent_dim).squeeze(0).clone().detach()
-            mu_prior[t_idx] = prior_list[t_idx][0].clone().detach()
-            logvar_prior[t_idx] = prior_list[t_idx][1].clone().detach().log()
+        rollouts_multi_task.obs[0].copy_(obs)
+        rollouts_multi_task.to(self.device)
 
-        num_data_context = torch.randint(low=1, high=self.num_steps, size=(1,)).item()
-        idx = torch.randperm(self.num_steps)
-        ctx_idx = idx[0:num_data_context]
+        for step in range(self.num_steps):
+            # Sample actions
+            with torch.no_grad():
+                value, action, action_log_prob, recurrent_hidden_states = self.actor_critic.act(
+                    rollouts_multi_task.obs[step], rollouts_multi_task.recurrent_hidden_states[step],
+                    rollouts_multi_task.masks[step])
 
-        context = torch.empty(self.num_processes, num_data_context, 2)
+            # Observe reward and next obs
+            obs, reward, done, infos = self.envs.step(action)
+            obs = augment_obs_oracle(obs, self.latent_dim, new_tasks,
+                                     self.use_env_obs, rescale_obs=self.rescale_obs,
+                                     max_old=self.max_old, min_old=self.min_old)
 
-        for t_idx in range(self.num_processes):
-            # Creating context to be fed to the inference
-            batch = data[t_idx][0]['train']
-            batch = torch.cat([batch[0], batch[1]], dim=1)
-            context[t_idx] = batch[ctx_idx]
+            # If done then clean the history of observations.
+            masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
+            bad_masks = torch.FloatTensor([[0.0] if 'bad_transition' in info.keys() else [1.0] for info in infos])
+            rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
+                                       action_log_prob, value, reward, masks, bad_masks)
 
-        self.vi_optim.zero_grad()
-        z_hat, mu_hat, logvar_hat = self.vi(context, prior)
+        with torch.no_grad():
+            next_value = self.actor_critic.get_value(
+                rollouts_multi_task.obs[-1], rollouts_multi_task.recurrent_hidden_states[-1],
+                rollouts_multi_task.masks[-1]).detach()
 
-        loss, kdl, mse = loss_inference_closed_form(z=new_tasks,
-                                                    mu_hat=mu_hat,
-                                                    logvar_hat=logvar_hat,
-                                                    mu_prior=mu_prior,
-                                                    logvar_prior=logvar_prior,
-                                                    n_samples=num_data_context,
-                                                    use_decay=self.use_decay_kld,
-                                                    decay_param=self.decay_kld,
-                                                    epoch=epoch,
-                                                    verbose=verbose
-                                                    )
-        loss.backward()
+        rollouts_multi_task.compute_returns(next_value, self.use_gae, self.gamma,
+                                            self.gae_lambda, self.use_proper_time_limits)
 
-        train_loss += loss.item()
-        self.vi_optim.step()
+        self.agent.update(rollouts_multi_task)
 
-        return train_loss
+        rollouts_multi_task.after_update()
 
-    def train_iter_smart(self, task_generator, env_name, seed, log_dir, epoch, verbose):
+    def train_iter_vae_smart(self, task_generator, env_name, seed, log_dir, verbose, epoch):
         envs_kwargs, _, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
         self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
                                             True, envs_kwargs, self.envs, num_frame_stack=None)
@@ -137,15 +181,23 @@ class PosteriorTSAgent:
         prior = torch.empty(self.num_processes, self.latent_dim * 2)
         mu_prior = torch.empty(self.num_processes, self.latent_dim)
         logvar_prior = torch.empty(self.num_processes, self.latent_dim)
+        prior_policy = torch.empty(self.num_processes, self.latent_dim * 2)
 
         for t_idx in range(self.num_processes):
             prior[t_idx] = prior_list[t_idx].reshape(1, self.latent_dim * 2).squeeze(0).clone().detach()
             mu_prior[t_idx] = prior_list[t_idx][0].clone().detach()
             logvar_prior[t_idx] = prior_list[t_idx][1].clone().detach().log()
+            prior_policy[t_idx] = prior_policy_list[t_idx].reshape(1, self.latent_dim * 2).squeeze(0).clone().detach()
 
-        self.envs.reset()
-
-        posterior = torch.tensor([prior_policy_list[i].flatten().tolist() for i in range(self.num_processes)])
+        obs = self.envs.reset()
+        obs = augment_obs_optimal(obs, self.latent_dim, prior_policy, self.use_env_obs,
+                                  is_prior=True, rescale_obs=self.rescale_obs,
+                                  max_old=self.max_old, min_old=self.min_old)
+        rollouts_multi_task = RolloutStorage(self.num_steps, self.num_processes,
+                                             self.obs_shape, self.action_space,
+                                             self.actor_critic.recurrent_hidden_state_size)
+        rollouts_multi_task.obs[0].copy_(obs)
+        rollouts_multi_task.to(self.device)
 
         num_data_context = torch.randint(low=1, high=self.num_steps, size=(1,)).item()
         context = torch.empty(self.num_processes, num_data_context, 2)
@@ -153,13 +205,27 @@ class PosteriorTSAgent:
         for step in range(num_data_context):
             use_prev_state = True if step > 0 else False
 
-            vae_action, env_action = self.pull_action(posterior, self.num_processes)
-            obs, reward, done, infos = self.envs.step(env_action)
-            posterior = get_posterior_no_prev(action=env_action, reward=reward, prior=prior,
+            with torch.no_grad():
+                value, action, action_log_prob, recurrent_hidden_states = self.actor_critic.act(
+                    rollouts_multi_task.obs[step], rollouts_multi_task.recurrent_hidden_states[step],
+                    rollouts_multi_task.masks[step])
+
+            obs, reward, done, infos = self.envs.step(action)
+            posterior = get_posterior_no_prev(action=action, reward=reward, prior=prior,
                                               max_action=self.max_action, min_action=self.min_action,
                                               use_prev_state=use_prev_state, vi=self.vi)
+            obs = augment_obs_optimal(obs, self.latent_dim, posterior, self.use_env_obs, False,
+                                      self.rescale_obs, self.max_old, self.min_old)
+
+            vae_action = _rescale_action(action, self.max_action, self.min_action)
             context[:, step, 0] = vae_action.squeeze(1)
             context[:, step, 1] = reward.squeeze(1)
+
+            masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
+            bad_masks = torch.FloatTensor(
+                [[0.0] if 'bad_transition' in info.keys() else [1.0] for info in infos])
+            rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
+                                       action_log_prob, value, reward, masks, bad_masks)
 
         self.vi_optim.zero_grad()
         z_hat, mu_hat, logvar_hat = self.vi(context, prior)
@@ -171,7 +237,7 @@ class PosteriorTSAgent:
                                                     logvar_prior=logvar_prior,
                                                     n_samples=num_data_context,
                                                     use_decay=self.use_decay_kld,
-                                                    decay_param=self.decay_kld,
+                                                    decay_param=self.decay_kld_rate,
                                                     epoch=epoch,
                                                     verbose=verbose
                                                     )
@@ -181,7 +247,7 @@ class PosteriorTSAgent:
 
         return loss.item()
 
-    def train_iter(self, task_generator, env_name, seed, log_dir, epoch, verbose):
+    def train_iter_vae(self, task_generator, env_name, seed, log_dir, verbose, epoch):
         envs_kwargs, _, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
         self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
                                             True, envs_kwargs, self.envs, num_frame_stack=None)
@@ -196,9 +262,15 @@ class PosteriorTSAgent:
             mu_prior[t_idx] = prior_list[t_idx][0].clone().detach()
             logvar_prior[t_idx] = prior_list[t_idx][1].clone().detach().log()
 
-        self.envs.reset()
-
-        posterior = torch.tensor([prior_list[i].flatten().tolist() for i in range(self.num_processes)])
+        obs = self.envs.reset()
+        obs = augment_obs_optimal(obs, self.latent_dim, prior, self.use_env_obs,
+                                  is_prior=True, rescale_obs=self.rescale_obs,
+                                  max_old=self.max_old, min_old=self.min_old)
+        rollouts_multi_task = RolloutStorage(self.num_steps, self.num_processes,
+                                             self.obs_shape, self.action_space,
+                                             self.actor_critic.recurrent_hidden_state_size)
+        rollouts_multi_task.obs[0].copy_(obs)
+        rollouts_multi_task.to(self.device)
 
         num_data_context = torch.randint(low=1, high=self.num_steps, size=(1,)).item()
         context = torch.empty(self.num_processes, num_data_context, 2)
@@ -206,13 +278,27 @@ class PosteriorTSAgent:
         for step in range(num_data_context):
             use_prev_state = True if step > 0 else False
 
-            vae_action, env_action = self.pull_action(posterior, self.num_processes)
-            obs, reward, done, infos = self.envs.step(env_action)
-            posterior = get_posterior_no_prev(action=env_action, reward=reward, prior=prior,
+            with torch.no_grad():
+                value, action, action_log_prob, recurrent_hidden_states = self.actor_critic.act(
+                    rollouts_multi_task.obs[step], rollouts_multi_task.recurrent_hidden_states[step],
+                    rollouts_multi_task.masks[step])
+
+            obs, reward, done, infos = self.envs.step(action)
+            posterior = get_posterior_no_prev(action=action, reward=reward, prior=prior,
                                               max_action=self.max_action, min_action=self.min_action,
                                               use_prev_state=use_prev_state, vi=self.vi)
+            obs = augment_obs_optimal(obs, self.latent_dim, posterior, self.use_env_obs, False,
+                                      self.rescale_obs, self.max_old, self.min_old)
+
+            vae_action = _rescale_action(action, self.max_action, self.min_action)
             context[:, step, 0] = vae_action.squeeze(1)
             context[:, step, 1] = reward.squeeze(1)
+
+            masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
+            bad_masks = torch.FloatTensor(
+                [[0.0] if 'bad_transition' in info.keys() else [1.0] for info in infos])
+            rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
+                                       action_log_prob, value, reward, masks, bad_masks)
 
         self.vi_optim.zero_grad()
         z_hat, mu_hat, logvar_hat = self.vi(context, prior)
@@ -224,20 +310,14 @@ class PosteriorTSAgent:
                                                     logvar_prior=logvar_prior,
                                                     n_samples=num_data_context,
                                                     use_decay=self.use_decay_kld,
-                                                    decay_param=self.decay_kld,
+                                                    decay_param=self.decay_kld_rate,
                                                     epoch=epoch,
                                                     verbose=verbose
                                                     )
-
         loss.backward()
         self.vi_optim.step()
 
         return loss.item()
-
-    def pull_action(self, posterior, num_processes):
-        vae_action = torch.normal(posterior[:, 0], posterior[:, 1]).reshape(num_processes, 1)
-        env_action = (1 - (-1)) / (self.max_action - self.min_action) * (vae_action - self.max_action) + 1
-        return vae_action, env_action
 
     def evaluate(self, num_task_to_evaluate, task_generator, env_name, seed, log_dir):
         assert num_task_to_evaluate % self.num_processes == 0
@@ -253,20 +333,35 @@ class PosteriorTSAgent:
             self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
                                                 True, envs_kwargs, self.envs, num_frame_stack=None)
 
-            self.envs.reset()
-
-            posterior = torch.tensor([prior_list[i].flatten().tolist() for i in range(self.num_processes)])
+            obs = self.envs.reset()
+            obs = augment_obs_optimal(obs, self.latent_dim, prior_list,
+                                      self.use_env_obs, is_prior=True, rescale_obs=self.rescale_obs,
+                                      max_old=self.max_old, min_old=self.min_old)
+            eval_recurrent_hidden_states = torch.zeros(
+                self.num_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
+            eval_masks = torch.zeros(self.num_processes, 1, device=self.device)
 
             use_prev_state = False
             while len(eval_episode_rewards) < self.num_processes:
-                _, env_action = self.pull_action(posterior, self.num_processes)
-
+                with torch.no_grad():
+                    _, action, _, eval_recurrent_hidden_states = self.actor_critic.act(
+                        obs,
+                        eval_recurrent_hidden_states,
+                        eval_masks,
+                        deterministic=False)
                 # Observe reward and next obs
-                obs, reward, done, infos = self.envs.step(env_action)
-                posterior = get_posterior_no_prev(self.vi, env_action, reward, prior_list,
+                obs, reward, done, infos = self.envs.step(action)
+                posterior = get_posterior_no_prev(self.vi, action, reward, prior_list,
                                                   min_action=self.min_action, max_action=self.max_action,
                                                   use_prev_state=use_prev_state)
+                obs = augment_obs_optimal(obs, self.latent_dim, posterior, self.use_env_obs,
+                                          False, self.rescale_obs, self.max_old, self.min_old)
                 use_prev_state = True
+
+                eval_masks = torch.tensor(
+                    [[0.0] if done_ else [1.0] for done_ in done],
+                    dtype=torch.float32,
+                    device=self.device)
 
                 for info in infos:
                     if 'episode' in info.keys():
@@ -328,22 +423,38 @@ class PosteriorTSAgent:
                                                      self.device,
                                                      True, temp, self.eval_envs, num_frame_stack=None)
 
-            self.eval_envs.reset()
-
-            posterior = torch.tensor([prior[i].flatten().tolist() for i in range(num_eval_processes)])
+            obs = self.eval_envs.reset()
+            obs = augment_obs_optimal(obs, self.latent_dim, prior,
+                                      self.use_env_obs, is_prior=True, rescale_obs=self.rescale_obs,
+                                      max_old=self.max_old, min_old=self.min_old)
+            eval_recurrent_hidden_states = torch.zeros(
+                num_eval_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
+            eval_masks = torch.zeros(num_eval_processes, 1, device=self.device)
 
             use_prev_state = False
             task_epi_rewards = []
 
             while len(task_epi_rewards) < num_eval_processes:
-                _, env_action = self.pull_action(posterior, num_eval_processes)
+                with torch.no_grad():
+                    _, action, _, eval_recurrent_hidden_states = self.actor_critic.act(
+                        obs,
+                        eval_recurrent_hidden_states,
+                        eval_masks,
+                        deterministic=False)
 
-                obs, reward, done, infos = self.eval_envs.step(env_action)
-                posterior = get_posterior_no_prev(self.vi, env_action, reward, prior,
+                obs, reward, done, infos = self.eval_envs.step(action)
+                posterior = get_posterior_no_prev(self.vi, action, reward, prior,
                                                   min_action=self.min_action, max_action=self.max_action,
                                                   use_prev_state=use_prev_state)
+                obs = augment_obs_optimal(obs, self.latent_dim, posterior,
+                                          self.use_env_obs, is_prior=False, rescale_obs=self.rescale_obs,
+                                          max_old=self.max_old, min_old=self.min_old)
 
                 use_prev_state = True
+                eval_masks = torch.tensor(
+                    [[0.0] if done_ else [1.0] for done_ in done],
+                    dtype=torch.float32,
+                    device=self.device)
                 for info in infos:
                     if 'episode' in info.keys():
                         total_epi_reward = info['episode']['r']

@@ -71,7 +71,8 @@ class RL2:
                 test_list.append(e)
 
         self.envs.close()
-        self.eval_envs.close()
+        if self.eval_envs is not None:
+            self.eval_envs.close()
 
         return eval_list, test_list
 

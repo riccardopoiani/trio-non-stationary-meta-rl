@@ -2,31 +2,24 @@ import torch
 import torch.nn.functional as F
 
 
-def loss_inference_closed_form(z, mu_hat, logvar_hat, mu_prior, logvar_prior, epoch, verbose):
-    mse = torch.mean(torch.sum(logvar_hat.exp(), 1)) + F.mse_loss(mu_hat, z)
-    # mse = torch.mean(torch.sum(logvar_hat.exp(), 1)) + F.l1_loss(mu_hat, z)
-    # mse = F.l1_loss(mu_hat, z)
-
-    if epoch == -1:
-        print("Mu hat {}".format(mu_hat))
-        print("Logvar hat {}".format(logvar_hat))
-        print("True task {}".format(z))
-        print(mse)
-        print(F.mse_loss(mu_hat, z))
-        print(torch.mean(torch.sum(logvar_hat.exp(), 1)))
+def loss_inference_closed_form(z, mu_hat, logvar_hat, mu_prior, logvar_prior,
+                               n_samples, use_decay, decay_param, epoch, verbose):
+    mse_direct = F.mse_loss(mu_hat, z)
+    mse_var = torch.mean(torch.sum(logvar_hat.exp(), 1))
+    mse = mse_direct + mse_var
 
     kdl_1 = (torch.log(torch.prod(logvar_prior.exp(), 1) / torch.prod(logvar_hat.exp(), 1)))
     kld_2 = (torch.sum(
         -1 + (mu_hat - mu_prior).pow(2) * (1 / logvar_prior.exp()) + (logvar_hat.exp() * (1 / logvar_prior.exp())), 1))
 
     kld = (1 / 2) * torch.mean(kdl_1 + kld_2)
+    if use_decay:
+        kld = kld * (decay_param / n_samples)
 
-    # if verbose and epoch % 100 == 0:
-    #    print("Epoch {} L1 loss {}".format(epoch, mse.item()))
     if verbose and epoch is not None and epoch % 100 == 0:
-        print("Epoch {} MSE {} KLD {}".format(epoch, mse.item(), kld.item()))
+        print("Epoch {} MSE DIR {} MSE VAR {} KLD {}".format(epoch, mse_direct.item(), mse_var.item(), kld.item()))
+
     return mse + kld, kld.item(), mse.item()
-    # return mse, mse.item(), mse.item()
 
 
 # Define the training procedure

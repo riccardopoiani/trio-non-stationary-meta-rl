@@ -8,7 +8,7 @@ def get_args():
 
     parser.add_argument("--algo", default="oracle",
                         help="algorithm to use: gp_ts | ours| ts_posterior | rl2 "
-                             "new_posterior_multi_task")
+                             "new_posterior_multi_task | ts_opt")
 
     # RL parameters
     parser.add_argument('--gamma', default=0.99, type=float)
@@ -37,11 +37,12 @@ def get_args():
     parser.add_argument('--sw-size', default=10, type=int, help="GP will use only the last sw number of samples")
 
     # Variational inference
-    parser.add_argument('--num-vae-steps', default=1, type=int, help="number of variational steps for each ppo update")
     parser.add_argument('--init-vae-steps', default=1000, type=int, help="initial number of inference training step")
     parser.add_argument('--use-data-loader', type=lambda x: int(x) != 0, default=False)
     parser.add_argument('--vae-smart', type=lambda x: int(x) != 0, default=False)
     parser.add_argument('--vae-lr', type=float, default=1e-3)
+    parser.add_argument('--use-decay-kld', type=lambda x: int(x) != 0, default=True)
+    parser.add_argument('--decay-kld-rate', type=float, default=None)
 
     # General settings
     parser.add_argument('--training-iter', default=10000, type=int, help="number of training iterations")
@@ -63,6 +64,6 @@ def get_args():
 
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
-    assert args.algo in ['gp_ts', 'ours', 'ts_posterior', 'rl2']
+    assert args.algo in ['gp_ts', 'ours', 'ts_posterior', 'rl2', 'ts_opt']
 
     return args

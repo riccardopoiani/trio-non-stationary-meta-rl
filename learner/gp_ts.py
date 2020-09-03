@@ -21,7 +21,7 @@ class GaussianProcessThompsonSampling:
         self.alpha = alpha
         self.n_restarts_optimizer = n_restart_opt
 
-        self.gp: GaussianProcessRegressor = GaussianProcessRegressor(kernel=self.kernel, alpha=self.alpha ** 2,
+        self.gp = GaussianProcessRegressor(kernel=self.kernel, alpha=self.alpha ** 2,
                                                                      normalize_y=True,
                                                                      n_restarts_optimizer=self.n_restarts_optimizer)
 

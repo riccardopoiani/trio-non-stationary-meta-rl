@@ -4,158 +4,37 @@ import numpy as np
 import torch
 import gym_sin
 from gym import spaces
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
-from learner.posterior_thompson_sampling import PosteriorTSAgent
-from learner.postrerior_ts_opt import PosteriorOptTSAgent
-from utilities.arguments import get_args
+from inference.inference_network import InferenceNetwork
 from learner.gp_ts import GaussianProcessThompsonSampling
 from learner.posterior_multi_task import PosteriorMTAgent
+from learner.posterior_thompson_sampling import PosteriorTSAgent
+from learner.postrerior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
-from inference.inference_network import InferenceNetwork
-from task.GuassianTaskGenerator import GaussianTaskGenerator
+from task.ExploreTaskGenerator import ExploreTaskGenerator
+from utilities.arguments import get_args
 from utilities.folder_management import handle_folder_creation
 
 
-def get_const_task_sequence(alpha, n_restarts, num_test_processes, std):
-    kernel = C(1.0, (1e-5, 1e5)) * RBF(1, (1e-5, 1e5))
-
-    gp_list = []
-    for i in range(num_test_processes):
-        gp_list.append([GaussianProcessRegressor(kernel=kernel,
-                                                 alpha=alpha ** 2,
-                                                 normalize_y=True,
-                                                 n_restarts_optimizer=n_restarts)
-                        for _ in range(num_test_processes)])
-    init_prior_test = [torch.tensor([[-10], [5]], dtype=torch.float32) for _ in range(num_test_processes)]
-
-    mean = -5
-
-    prior_seq = []
-    for idx in range(15):
-        prior_seq.append(torch.tensor([[mean], [std]], dtype=torch.float32))
-
-    return gp_list, prior_seq, init_prior_test
-
-
-def get_linear_task_sequence(alpha, n_restarts, num_test_processes, std):
-    kernel = C(1.0, (1e-5, 1e5)) * RBF(1, (1e-5, 1e5))
-
-    gp_list = []
-    for i in range(num_test_processes):
-        gp_list.append([GaussianProcessRegressor(kernel=kernel,
-                                                 alpha=alpha ** 2,
-                                                 normalize_y=True,
-                                                 n_restarts_optimizer=n_restarts)
-                        for _ in range(num_test_processes)])
-    init_prior_test = [torch.tensor([[30], [5]], dtype=torch.float32) for _ in range(num_test_processes)]
-
-    prior_seq = []
-    for idx in range(20):
-        mean = 30 - idx
-
-        prior_seq.append(torch.tensor([[mean], [std]], dtype=torch.float32))
-
-    return gp_list, prior_seq, init_prior_test
-
-
-def get_phase_task_sequence(alpha, n_restarts, num_test_processes, std):
-    kernel = C(1.0, (1e-5, 1e5)) * RBF(1, (1e-5, 1e5))
-
-    gp_list = []
-    for i in range(num_test_processes):
-        gp_list.append([GaussianProcessRegressor(kernel=kernel,
-                                                 alpha=alpha ** 2,
-                                                 normalize_y=True,
-                                                 n_restarts_optimizer=n_restarts)
-                        for _ in range(num_test_processes)])
-    init_prior_test = [torch.tensor([[-5], [5]], dtype=torch.float32) for _ in range(num_test_processes)]
-
-    prior_seq = []
-    for idx in range(40):
-        if idx < 15:
-            mean = 0
-        elif idx < 30:
-            mean = 10
-        else:
-            mean = 0
-
-        prior_seq.append(torch.tensor([[mean], [std]], dtype=torch.float32))
-
-    return gp_list, prior_seq, init_prior_test
-
-
-def get_abrupt_and_smooth(alpha, n_restarts, num_test_processes, std):
-    kernel = C(1.0, (1e-5, 1e5)) * RBF(1, (1e-5, 1e5))
-
-    gp_list = []
-    for i in range(num_test_processes):
-        gp_list.append([GaussianProcessRegressor(kernel=kernel,
-                                                 alpha=alpha ** 2,
-                                                 normalize_y=True,
-                                                 n_restarts_optimizer=n_restarts)
-                        for _ in range(num_test_processes)])
-    init_prior_test = [torch.tensor([[-30], [5]], dtype=torch.float32) for _ in range(num_test_processes)]
-    prior_seq = []
-
-    for idx in range(60):
-        if idx < 15:
-            mean = -30
-        elif idx < 50:
-            mean = -20 + (idx - 15)
-        else:
-            mean = -20 + 50 - 15
-
-        prior_seq.append(torch.tensor([[mean], [std]], dtype=torch.float32))
-
-    return gp_list, prior_seq, init_prior_test
-
-
-def get_sequences(alpha, n_restarts, num_test_processes, std):
-    # Retrieve task
-    gp_list_const, prior_seq_const, init_prior_const = get_const_task_sequence(alpha, n_restarts,
-                                                                               num_test_processes, std)
-    gp_list_linear, prior_seq_linear, init_prior_linear = get_const_task_sequence(alpha, n_restarts,
-                                                                                  num_test_processes,
-                                                                                  std)
-    gp_list_phase, prior_seq_phase, init_prior_phase = get_phase_task_sequence(alpha, n_restarts, num_test_processes,
-                                                                               std)
-    gp_list_both, prior_seq_both, init_prior_both = get_abrupt_and_smooth(alpha, n_restarts, num_test_processes, std)
-
-    # Fill lists
-    prior_sequences = [prior_seq_const, prior_seq_linear, prior_seq_phase, prior_seq_both]
-    gp_list_sequences = [gp_list_const, gp_list_linear, gp_list_phase, gp_list_both]
-    init_prior = [init_prior_const, init_prior_linear, init_prior_phase, init_prior_both]
-    # gp_list_sequences = [gp_list_const]
-    # prior_sequences = [prior_seq_const]
-    # init_prior = [init_prior_const]
-
-    return prior_sequences, gp_list_sequences, init_prior
-
-
 def main():
-    print("Starting...")
-    # Task family settings
-    folder = "result/gaussv0/"
-    env_name = "gauss-v0"
+    # General settings
+    folder = "result/exploregaussv0/"
+    env_name = "exploregauss-v0"
     action_space = spaces.Box(low=np.array([-1]), high=np.array([1]))
+
     latent_dim = 1
     x_min = -100
     x_max = 100
-    min_mean = -60
-    max_mean = 60
-    prior_mu_min = -10
-    prior_mu_max = 10
-    prior_std_min = 1
-    prior_std_max = 10
+    noise_std = 0.001
+    std = 10
+    mean_max = 60
+    mean_min = 40
+
     n_tasks = 10000
-    std = 5
-    noise_seq_std = 0.1
-    amplitude = 1
 
     args = get_args()
 
+    # Set torch stuff
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
@@ -166,30 +45,20 @@ def main():
     torch.set_num_threads(1)
     device = torch.device("cuda:0" if args.cuda else "cpu")
 
-    task_generator = GaussianTaskGenerator(x_min=x_min, x_max=x_max, min_mean=min_mean, max_mean=max_mean,
-                                           prior_mu_min=prior_mu_min,
-                                           prior_mu_max=prior_mu_max,
-                                           prior_std_min=prior_std_min,
-                                           prior_std_max=prior_std_max,
-                                           std=std,
-                                           amplitude=amplitude)
+    task_generator = ExploreTaskGenerator(x_min=x_min, x_max=x_max, noise_std=noise_std,
+                                          std=std, mean_max=mean_max, mean_min=mean_min)
 
-    print("Creating family...", end=" ")
     task_generator.create_task_family(n_tasks=n_tasks, n_batches=1, test_perc=0,
                                       batch_size=args.num_steps if args.use_data_loader else 1)
-    print("Done")
+
     if len(args.folder) == 0:
         folder = folder + args.algo + "/"
     else:
         folder = folder + args.folder + "/"
     fd, folder_path_with_date = handle_folder_creation(result_path=folder)
 
-    prior_sequences, gp_list_sequences, init_prior = get_sequences(alpha=args.alpha_gp,
-                                                                   n_restarts=args.n_restarts_gp,
-                                                                   num_test_processes=args.num_test_processes,
-                                                                   std=noise_seq_std)
+    prior_sequences, gp_list_sequences, init_prior = [], [], []
 
-    print("Algorithm start..")
     if args.algo == 'rl2':
         obs_shape = (2,)
 
@@ -235,7 +104,7 @@ def main():
     elif args.algo == 'ts_opt':
         max_old = [100]
         min_old = [-100]
-        obs_shape = (1, )
+        obs_shape = (1,)
 
         vi = InferenceNetwork(n_in=4, z_dim=latent_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
@@ -250,7 +119,7 @@ def main():
                                     use_env_obs=False,
                                     min_action=x_min,
                                     max_action=x_max,
-                                    max_sigma=prior_std_max,
+                                    max_sigma=30,
                                     action_space=action_space,
                                     obs_shape=obs_shape,
                                     clip_param=args.clip_param,
@@ -338,7 +207,7 @@ def main():
                                  use_time=False,
                                  rescale_time=None,
                                  max_time=None,
-                                 max_sigma=prior_std_max,
+                                 max_sigma=30,
                                  use_decay_kld=args.use_decay_kld,
                                  decay_kld_rate=args.decay_kld_rate
                                  )
@@ -396,7 +265,7 @@ def main():
                                  use_env_obs=False,
                                  min_action=x_min,
                                  max_action=x_max,
-                                 max_sigma=prior_std_max,
+                                 max_sigma=30,
                                  use_decay_kld=args.use_decay_kld,
                                  decay_kld=args.decay_kld_rate
                                  )
