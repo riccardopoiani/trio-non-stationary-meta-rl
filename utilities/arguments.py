@@ -38,7 +38,6 @@ def get_args():
 
     # Variational inference
     parser.add_argument('--init-vae-steps', default=1000, type=int, help="initial number of inference training step")
-    parser.add_argument('--use-data-loader', type=lambda x: int(x) != 0, default=False)
     parser.add_argument('--vae-smart', type=lambda x: int(x) != 0, default=False)
     parser.add_argument('--vae-lr', type=float, default=1e-3)
     parser.add_argument('--use-decay-kld', type=lambda x: int(x) != 0, default=True)
@@ -46,7 +45,6 @@ def get_args():
 
     # General settings
     parser.add_argument('--training-iter', default=10000, type=int, help="number of training iterations")
-    parser.add_argument('--rescale-obs', default=True, type=bool, help="if observations should be rescaled or not")
     parser.add_argument('--num-update-per-meta-training-iter', type=int, default=1)
     parser.add_argument('--eval-interval', type=int, default=20, help="evaluate agent every x iteration")
     parser.add_argument('--log-dir', type=str, default=".")

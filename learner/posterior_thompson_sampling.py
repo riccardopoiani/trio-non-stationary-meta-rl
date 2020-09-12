@@ -54,7 +54,7 @@ class PosteriorTSAgent:
                 loss = self.train_iter_data_loader(task_generator=task_generator, epoch=i,
                                                    verbose=verbose)
             else:
-                loss = self.train_iter(task_generator, env_name, seed, log_dir, verbose)
+                loss = self.train_iter(task_generator, env_name, seed, log_dir, i, verbose)
 
             vi_loss.append(loss)
 
@@ -152,8 +152,9 @@ class PosteriorTSAgent:
 
         for step in range(num_data_context):
             use_prev_state = True if step > 0 else False
+            is_prior = True if step == 0 else False
 
-            vae_action, env_action = self.pull_action(posterior, self.num_processes)
+            vae_action, env_action = self.pull_action(posterior, self.num_processes, is_prior=is_prior)
             obs, reward, done, infos = self.envs.step(env_action)
             posterior = get_posterior_no_prev(action=env_action, reward=reward, prior=prior,
                                               max_action=self.max_action, min_action=self.min_action,
@@ -205,8 +206,9 @@ class PosteriorTSAgent:
 
         for step in range(num_data_context):
             use_prev_state = True if step > 0 else False
+            is_prior = True if step == 0 else False
 
-            vae_action, env_action = self.pull_action(posterior, self.num_processes)
+            vae_action, env_action = self.pull_action(posterior, self.num_processes, is_prior=is_prior)
             obs, reward, done, infos = self.envs.step(env_action)
             posterior = get_posterior_no_prev(action=env_action, reward=reward, prior=prior,
                                               max_action=self.max_action, min_action=self.min_action,
@@ -234,8 +236,12 @@ class PosteriorTSAgent:
 
         return loss.item()
 
-    def pull_action(self, posterior, num_processes):
-        vae_action = torch.normal(posterior[:, 0], posterior[:, 1]).reshape(num_processes, 1)
+    def pull_action(self, posterior, num_processes, is_prior):
+        if is_prior:
+            vae_action = torch.normal(posterior[:, 0], posterior[:, 1].sqrt()).reshape(num_processes, 1)
+        else:
+            vae_action = torch.normal(posterior[:, 0], posterior[:, 1].exp().sqrt()).reshape(num_processes, 1)
+
         env_action = (1 - (-1)) / (self.max_action - self.min_action) * (vae_action - self.max_action) + 1
         return vae_action, env_action
 
@@ -258,8 +264,9 @@ class PosteriorTSAgent:
             posterior = torch.tensor([prior_list[i].flatten().tolist() for i in range(self.num_processes)])
 
             use_prev_state = False
+            is_prior = True
             while len(eval_episode_rewards) < self.num_processes:
-                _, env_action = self.pull_action(posterior, self.num_processes)
+                _, env_action = self.pull_action(posterior, self.num_processes, is_prior)
 
                 # Observe reward and next obs
                 obs, reward, done, infos = self.envs.step(env_action)
@@ -267,7 +274,7 @@ class PosteriorTSAgent:
                                                   min_action=self.min_action, max_action=self.max_action,
                                                   use_prev_state=use_prev_state)
                 use_prev_state = True
-
+                is_prior = False
                 for info in infos:
                     if 'episode' in info.keys():
                         total_epi_reward = info['episode']['r']
@@ -333,10 +340,11 @@ class PosteriorTSAgent:
             posterior = torch.tensor([prior[i].flatten().tolist() for i in range(num_eval_processes)])
 
             use_prev_state = False
+            is_prior = True
             task_epi_rewards = []
 
             while len(task_epi_rewards) < num_eval_processes:
-                _, env_action = self.pull_action(posterior, num_eval_processes)
+                _, env_action = self.pull_action(posterior, num_eval_processes, is_prior=is_prior)
 
                 obs, reward, done, infos = self.eval_envs.step(env_action)
                 posterior = get_posterior_no_prev(self.vi, env_action, reward, prior,
@@ -344,6 +352,8 @@ class PosteriorTSAgent:
                                                   use_prev_state=use_prev_state)
 
                 use_prev_state = True
+                is_prior = False
+
                 for info in infos:
                     if 'episode' in info.keys():
                         total_epi_reward = info['episode']['r']

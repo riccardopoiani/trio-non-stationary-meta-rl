@@ -36,7 +36,7 @@ class InferenceNetwork(torch.nn.Module):
         original_prior = prior
         if len(original_prior.shape) == 1:
             original_prior = original_prior.unsqueeze(0)
-        prior = prior.reshape(n_batch, 1, 2)
+        prior = prior.reshape(n_batch, 1, 2 * self.z_dim)
         prior = prior.repeat(1, seq_len, 1)
 
         context = torch.cat([context, prior], dim=2).view(n_batch, seq_len, self.n_in)

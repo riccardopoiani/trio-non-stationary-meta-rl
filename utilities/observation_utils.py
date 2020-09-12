@@ -64,7 +64,7 @@ def augment_obs_posterior(obs, latent_dim, posterior, use_env_obs, is_prior, res
     return new_obs
 
 
-def get_posterior_no_prev(vi, action, reward, prior, max_action, min_action, use_prev_state=True):
+def get_posterior_no_prev(vi, action, reward, prior, max_action, min_action, env_obs, use_env_obs, use_prev_state=True):
     """
     Feed the variational model with the actual reward to identify the latent space
     and get the current reward using the posterior and the true task
@@ -77,8 +77,14 @@ def get_posterior_no_prev(vi, action, reward, prior, max_action, min_action, use
         t = (max_action - min_action) / (1 - (-1)) * (action - 1) + max_action
     else:
         t = action
-    context = torch.empty(num_proc, 1, 2)
-    context[:, 0, :] = torch.cat([t.float(), reward], 1)
+
+    context = torch.empty(num_proc, 1, 1 + env_obs.shape[1] + action.shape[1]) if use_env_obs \
+        else torch.empty(num_proc, 1, 1 + action.shape[1])
+
+    if use_env_obs:
+        context[:, 0, :] = torch.cat([t.float(), reward, env_obs], 1)
+    else:
+        context[:, 0, :] = torch.cat([t.float(), reward], 1)
 
     res = vi(context=context, prior=flatten_prior, use_prev_state=use_prev_state)
     res = res[1:]

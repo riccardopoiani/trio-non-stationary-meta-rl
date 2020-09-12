@@ -56,7 +56,6 @@ class RL2:
 
         for i in range(n_iter):
             self.train_iter(env_name=env_name, seed=seed, task_generator=task_generator, log_dir=log_dir)
-
             if i % 10 == 0:
                 print("Iteration {} / {}".format(i, n_iter))
 
@@ -155,6 +154,7 @@ class RL2:
                 self.num_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
             eval_masks = torch.zeros(self.num_processes, 1, device=self.device)
 
+            already_ended = torch.zeros(self.num_processes, dtype=torch.bool)
             while len(eval_episode_rewards) < self.num_processes:
                 with torch.no_grad():
                     _, action, _, eval_recurrent_hidden_states = self.actor_critic.act(
@@ -173,10 +173,11 @@ class RL2:
                     dtype=torch.float32,
                     device=self.device)
 
-                for info in infos:
-                    if 'episode' in info.keys():
+                for i, info in enumerate(infos):
+                    if 'episode' in info.keys() and not already_ended[i]:
                         total_epi_reward = info['episode']['r']
                         eval_episode_rewards.append(total_epi_reward)
+                already_ended = already_ended | done
 
             r_epi_list.append(eval_episode_rewards)
 
@@ -205,7 +206,7 @@ class RL2:
                 eval_recurrent_hidden_states = torch.zeros(
                     num_test_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
                 eval_masks = torch.zeros(num_test_processes, 1, device=self.device)
-
+                already_ended = torch.zeros(num_test_processes, dtype=torch.bool)
                 while len(eval_episode_rewards) < num_test_processes:
                     with torch.no_grad():
                         _, action, _, eval_recurrent_hidden_states = self.actor_critic.act(
@@ -224,10 +225,12 @@ class RL2:
                         dtype=torch.float32,
                         device=self.device)
 
-                    for info in infos:
-                        if 'episode' in info.keys():
+                    for i, info in enumerate(infos):
+                        if 'episode' in info.keys() and not already_ended[i]:
                             total_epi_reward = info['episode']['r']
                             eval_episode_rewards.append(total_epi_reward)
+                    already_ended = already_ended | done
+
                 sequence_rewards.append(np.mean(eval_episode_rewards))
 
             result_all.append(sequence_rewards)

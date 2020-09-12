@@ -1,11 +1,11 @@
 import torch
 
-from task.TaskGenerator import TaskGenerator
+from task.task_generator import TaskGenerator
 
 
 class ExploreTaskGenerator(TaskGenerator):
 
-    def __init__(self, x_min, x_max, noise_std, std, mean_max, mean_min):
+    def __init__(self, x_min, x_max, noise_std, std, mean_max, mean_min, amplitude):
         super(ExploreTaskGenerator, self).__init__()
 
         self.x_min = x_min
@@ -14,6 +14,7 @@ class ExploreTaskGenerator(TaskGenerator):
         self.std = std
         self.mean_max = mean_max
         self.mean_min = mean_min
+        self.amplitude = amplitude
 
         self.data_set = None
         self.param = None
@@ -31,8 +32,7 @@ class ExploreTaskGenerator(TaskGenerator):
                        'noise_std': self.noise_std,
                        'std': self.std,
                        'mean': task_param.item(),
-                       'scale_reward': False,
-                       'amplitude': 1
+                       'amplitude': self.amplitude
                        }
 
         return envs_kwargs
@@ -49,8 +49,7 @@ class ExploreTaskGenerator(TaskGenerator):
                         'noise_std': self.noise_std,
                         'std': self.std,
                         'mean': new_tasks[i].item(),
-                        'scale_reward': False,
-                        'amplitude': 1
+                        'amplitude': self.amplitude
                         } for i in range(num_processes)]
 
         return envs_kwargs, None, prior, new_tasks

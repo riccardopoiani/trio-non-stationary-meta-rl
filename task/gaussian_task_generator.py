@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from task.TaskGenerator import TaskGenerator
+from task.task_generator import TaskGenerator
 
 
 class GaussianTaskGenerator(TaskGenerator):
