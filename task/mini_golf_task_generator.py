@@ -27,9 +27,9 @@ class MiniGolfTaskGenerator(TaskGenerator):
             mu = prior[0].clone().detach()
             var = prior[1].clone().detach()
 
-            task_param = torch.normal(mu, var)
+            task_param = torch.normal(mu, var.sqrt())
 
-            if task_param.item() < self.max_friction and task_param.item() > self.min_friction:
+            if self.max_friction > task_param.item() > self.min_friction:
                 ok = False
 
         envs_kwargs = {'friction': task_param.item()}
@@ -47,7 +47,7 @@ class MiniGolfTaskGenerator(TaskGenerator):
             if torch.sum(new_tasks > self.max_friction) + torch.sum(new_tasks < self.min_friction) == 0:
                 ok = False
 
-        prior = [torch.tensor([[mu[i]], [std[i]]]) for i in range(num_processes)]
+        prior = [torch.tensor([[mu[i]], [std[i].pow(2)]]) for i in range(num_processes)]
 
         envs_kwargs = [{'friction': new_tasks[i].item()} for i in range(num_processes)]
 

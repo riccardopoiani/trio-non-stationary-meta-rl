@@ -8,7 +8,7 @@ from ppo_a2c.algo.ppo import PPO
 from ppo_a2c.envs import get_vec_envs_multi_task
 from ppo_a2c.model import MLPBase, Policy
 from ppo_a2c.storage import RolloutStorage
-from utilities.observation_utils import augment_obs_posterior, get_posterior_no_prev
+from utilities.observation_utils import augment_obs_posterior, get_posterior
 
 
 def _rescale_action(action, max_new, min_new):
@@ -261,9 +261,9 @@ class OursAgent:
                 if use_env_obs:
                     context[:, step, 1 + self.action_dim:] = obs
 
-                posterior = get_posterior_no_prev(self.vae, action, reward, prior, max_action=self.max_action,
-                                                  min_action=self.min_action, use_prev_state=use_prev_state,
-                                                  env_obs=obs, use_env_obs=use_env_obs)
+                posterior = get_posterior(self.vae, action, reward, prior, max_action=self.max_action,
+                                          min_action=self.min_action, use_prev_state=use_prev_state,
+                                          env_obs=obs, use_env_obs=use_env_obs)
                 obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                             use_env_obs, rescale_obs=self.rescale_obs,
                                             max_old=self.max_old, min_old=self.min_old,
@@ -344,7 +344,7 @@ class OursAgent:
                         rollouts_multi_task.masks[0])
                 obs, reward, _, _ = self.envs.step(action)
                 if use_env_obs:
-                    context[:, step, 1+self.action_dim:] = obs
+                    context[:, step, 1 + self.action_dim:] = obs
                 vae_action = _rescale_action(action, max_new=self.max_action, min_new=self.min_action)
                 context[:, step, 0:self.action_dim] = vae_action
                 context[:, step, self.action_dim] = reward.squeeze(1)
@@ -360,10 +360,10 @@ class OursAgent:
 
                 obs, reward, done, infos = self.envs.step(action)
                 if use_env_obs:
-                    context[:, step, 1+self.action_dim:] = obs
-                posterior = get_posterior_no_prev(self.vae, action, reward, prior, max_action=self.max_action,
-                                                  min_action=self.min_action, use_prev_state=use_prev_state,
-                                                  use_env_obs=use_env_obs, env_obs=obs)
+                    context[:, step, 1 + self.action_dim:] = obs
+                posterior = get_posterior(self.vae, action, reward, prior, max_action=self.max_action,
+                                          min_action=self.min_action, use_prev_state=use_prev_state,
+                                          use_env_obs=use_env_obs, env_obs=obs)
                 obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                             use_env_obs, rescale_obs=self.rescale_obs,
                                             max_old=self.max_old, min_old=self.min_old,
@@ -428,9 +428,9 @@ class OursAgent:
 
             # Observe reward and next obs
             obs, reward, done, infos = self.envs.step(action)
-            posterior = get_posterior_no_prev(self.vae, action, reward, prior, max_action=self.max_action,
-                                              min_action=self.min_action, use_prev_state=use_prev_state,
-                                              use_env_obs=use_env_obs, env_obs=obs)
+            posterior = get_posterior(self.vae, action, reward, prior, max_action=self.max_action,
+                                      min_action=self.min_action, use_prev_state=use_prev_state,
+                                      use_env_obs=use_env_obs, env_obs=obs)
 
             obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                         use_env_obs, rescale_obs=self.rescale_obs,
@@ -462,6 +462,72 @@ class OursAgent:
         n_iter = num_task_to_evaluate // self.num_processes
         r_epi_list = []
 
+        for num_iteration in range(n_iter):
+            envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
+            self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
+                                                True, envs_kwargs, self.envs, num_frame_stack=None)
+
+            eval_episode_rewards = []
+
+            obs = self.envs.reset()
+            obs = augment_obs_posterior(obs, self.latent_dim, prior,
+                                        use_env_obs, rescale_obs=self.rescale_obs,
+                                        max_old=self.max_old, min_old=self.min_old, is_prior=True)
+
+            eval_recurrent_hidden_states = torch.zeros(
+                self.num_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
+            eval_masks = torch.zeros(self.num_processes, 1, device=self.device)
+
+            use_prev_state = False
+            already_ended = torch.zeros(self.num_processes, dtype=torch.bool)
+            while len(eval_episode_rewards) < self.num_processes:
+                with torch.no_grad():
+                    _, action, _, eval_recurrent_hidden_states = self.actor_critic.act(
+                        obs,
+                        eval_recurrent_hidden_states,
+                        eval_masks,
+                        deterministic=False)
+
+                # Observe reward and next obs
+                obs, reward, done, infos = self.envs.step(action)
+                posterior = get_posterior(self.vae, action, reward, prior,
+                                          min_action=self.min_action, max_action=self.max_action,
+                                          use_prev_state=use_prev_state, use_env_obs=use_env_obs,
+                                          env_obs=obs)
+                obs = augment_obs_posterior(obs, self.latent_dim, posterior,
+                                            use_env_obs, rescale_obs=self.rescale_obs,
+                                            max_old=self.max_old, min_old=self.min_old, is_prior=False)
+
+                use_prev_state = True
+                eval_masks = torch.tensor(
+                    [[0.0] if done_ else [1.0] for done_ in done],
+                    dtype=torch.float32,
+                    device=self.device)
+
+                for i, info in enumerate(infos):
+                    if 'episode' in info.keys() and not already_ended[i]:
+                        total_epi_reward = info['episode']['r']
+                        eval_episode_rewards.append(total_epi_reward)
+
+                already_ended = already_ended | done
+
+            r_epi_list.append(eval_episode_rewards)
+
+        r_epi_list = reduce(list.__add__, r_epi_list)
+        print("Evaluation using {} tasks. Mean reward: {}".format(num_task_to_evaluate, np.mean(r_epi_list)))
+        return np.mean(r_epi_list)
+
+    def evaluate_debug(self, num_task_to_evaluate, task_generator, log_dir, seed, use_env_obs, env_name):
+        assert num_task_to_evaluate % self.num_processes == 0
+
+        print("Evaluation...")
+
+        n_iter = num_task_to_evaluate // self.num_processes
+        r_epi_list = []
+
+        info_epi_list = []
+        bad_goals = []
+
         for _ in range(n_iter):
             envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
             self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
@@ -490,10 +556,10 @@ class OursAgent:
 
                 # Observe reward and next obs
                 obs, reward, done, infos = self.envs.step(action)
-                posterior = get_posterior_no_prev(self.vae, action, reward, prior,
-                                                  min_action=self.min_action, max_action=self.max_action,
-                                                  use_prev_state=use_prev_state, use_env_obs=use_env_obs,
-                                                  env_obs=obs)
+                posterior = get_posterior(self.vae, action, reward, prior,
+                                          min_action=self.min_action, max_action=self.max_action,
+                                          use_prev_state=use_prev_state, use_env_obs=use_env_obs,
+                                          env_obs=obs)
                 obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                             use_env_obs, rescale_obs=self.rescale_obs,
                                             max_old=self.max_old, min_old=self.min_old, is_prior=False)
@@ -507,6 +573,9 @@ class OursAgent:
                     if 'episode' in info.keys() and not already_ended[i]:
                         total_epi_reward = info['episode']['r']
                         eval_episode_rewards.append(total_epi_reward)
+                        info_epi_list.append(info['episode'])
+                        if info['episode']['l'] == 30:
+                            bad_goals.append(envs_kwargs[i])
 
                 already_ended = already_ended | done
 
@@ -514,7 +583,7 @@ class OursAgent:
 
         r_epi_list = reduce(list.__add__, r_epi_list)
         print("Evaluation using {} tasks. Mean reward: {}".format(num_task_to_evaluate, np.mean(r_epi_list)))
-        return np.mean(r_epi_list)
+        return np.mean(r_epi_list), info_epi_list, bad_goals
 
     def meta_test_sequences(self, gp_list_sequences, sw_size, env_name, seed, log_dir, prior_sequences,
                             init_prior_sequences, use_env_obs, num_eval_processes, task_generator,
@@ -527,6 +596,9 @@ class OursAgent:
         posterior_history_true = []
         prediction_mean_false = []
         posterior_history_false = []
+
+        print(len(gp_list_sequences))
+        print(len(gp_list_sequences[0]))
 
         for seq_idx, s in enumerate(prior_sequences):
             print("SEQ IDX {}".format(seq_idx))
@@ -609,10 +681,10 @@ class OursAgent:
 
                 # Observe reward and next obs
                 obs, reward, done, infos = self.eval_envs.step(action)
-                posterior = get_posterior_no_prev(self.vae, action, reward, prior,
-                                                  min_action=self.min_action, max_action=self.max_action,
-                                                  use_prev_state=use_prev_state, use_env_obs=use_env_obs,
-                                                  env_obs=obs)
+                posterior = get_posterior(self.vae, action, reward, prior,
+                                          min_action=self.min_action, max_action=self.max_action,
+                                          use_prev_state=use_prev_state, use_env_obs=use_env_obs,
+                                          env_obs=obs)
                 obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                             use_env_obs, rescale_obs=self.rescale_obs,
                                             max_old=self.max_old, min_old=self.min_old, is_prior=False)
@@ -658,7 +730,7 @@ class OursAgent:
                         if use_true_sigma:
                             prior_proc[1, dim] = sigma[0]
                         else:
-                            prior_proc[1, dim] = self.max_sigma[dim]
+                            prior_proc[1, dim] = self.max_sigma[dim] ** 2
                         curr_pred.append(y_pred[0][0])
                     prior.append(prior_proc)
                 prediction_mean.append(np.mean(curr_pred))

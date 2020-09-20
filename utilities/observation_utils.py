@@ -64,7 +64,7 @@ def augment_obs_posterior(obs, latent_dim, posterior, use_env_obs, is_prior, res
     return new_obs
 
 
-def get_posterior_no_prev(vi, action, reward, prior, max_action, min_action, env_obs, use_env_obs, use_prev_state=True):
+def get_posterior(vi, action, reward, prior, max_action, min_action, env_obs, use_env_obs, use_prev_state=True):
     """
     Feed the variational model with the actual reward to identify the latent space
     and get the current reward using the posterior and the true task

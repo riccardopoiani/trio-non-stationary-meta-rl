@@ -4,37 +4,93 @@ import torch
 import numpy as np
 import gym_sin
 from gym import spaces
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
-from inference.inference_network import InferenceNetwork
+from inference.inference_network import InferenceNetwork, MujocoInferenceNetwork
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
-from task.gridworld_task_generator import GridWorldTaskGenerator
+from task.navigation_task_generator import NavigationTaskGenerator
 from utilities.arguments import get_args
 from utilities.folder_management import handle_folder_creation
 
 
-def get_sequences(alpha, n_restarts, num_test_processes, std):
-    return [], [], []
+def get_alternating_sequences(alpha, n_restarts, num_test_processes, std, num_signals):
+    # Creating GPs
+    kernel = C(1.0, (1e-8, 1e8)) * RBF(1, (1e-8, 1e8))
+    gp_list = []
+
+    for _ in range(1 + 2 * num_signals):
+        curr_dim_list = []
+        for _ in range(num_test_processes):
+            curr_dim_list.append(GaussianProcessRegressor(kernel=kernel,
+                                                          alpha=alpha ** 2,
+                                                          normalize_y=False,
+                                                          n_restarts_optimizer=n_restarts)
+                                 )
+        gp_list.append(curr_dim_list)
+
+    # Creating prior distribution
+    p_min = [-1]
+    p_var = [std]
+    for _ in range(2 * num_signals):
+        p_min.append(0)
+        p_var.append(std ** 2)
+    init_prior_test = [torch.tensor([p_min, p_var], dtype=torch.float32)
+                       for _ in range(num_test_processes)]
+
+    # Create prior sequence
+    prior_seq = []
+    for idx in range(50):
+        p_min = []
+        p_var = []
+        if idx <= 20:
+            p_min.append(-1 + idx / 10)
+            p_var.append(std ** 2)
+        elif 20 < idx < 30:
+            p_min.append(1)
+            p_var.append(std ** 2)
+        else:
+            p_min.append(1 - (idx - 30) / 10)
+            p_var.append(std ** 2)
+
+        for _ in range(2 * num_signals):
+            if idx <= 20:
+                p_min.append(1 - idx / 10)
+            else:
+                p_min.append(-1)
+            p_var.append(std ** 2)
+
+        prior_seq.append(torch.tensor([p_min, p_var], dtype=torch.float32))
+
+    return gp_list, prior_seq, init_prior_test
+
+
+def get_sequences(alpha, n_restarts, num_test_processes, std, num_signals):
+    gp_list, prior_seq, init_prior_test = get_alternating_sequences(alpha=alpha,
+                                                                    n_restarts=n_restarts,
+                                                                    num_test_processes=num_test_processes,
+                                                                    std=std,
+                                                                    num_signals=num_signals)
+    return [prior_seq], [gp_list], [init_prior_test]
 
 
 def main():
     print("Starting...")
+    args = get_args()
+
     # Task family settings
-    folder = "result/oldgridwolrdv0/"
-    env_name = "gridworld-v0"
+    folder = "result/navigationv0/"
+    env_name = "navigation-v0"
 
     # Task family parameters
-    size = 40
-    goal_radius = 1
     prior_goal_std_min = 0.00001
-    prior_goal_std_max = 0.05
-    prior_balance_std_min = 0.00001
-    prior_balance_std_max = 0.2
+    prior_goal_std_max = 0.2
     prior_signal_std_min = 0.0001
-    prior_signal_std_max = 0.5
-    signals_dim = 2
-    latent_dim = 4 + signals_dim * 2  # (x,y) + (bal_x, bal_y) + num_sig * (x,y)
+    prior_signal_std_max = 0.7
+    signals_dim = args.num_signals
+    latent_dim = 1 + signals_dim * 2  # (x,y) + (bal_x, bal_y) + num_sig * (x,y)
 
     high_act = np.array([
         1,
@@ -51,8 +107,6 @@ def main():
     # Other settings
     noise_seq_std = 0.001
 
-    args = get_args()
-
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
@@ -63,15 +117,12 @@ def main():
     torch.set_num_threads(1)
     device = torch.device("cuda:0" if args.cuda else "cpu")
 
-    task_generator = GridWorldTaskGenerator(size=size,
-                                            goal_radius=goal_radius,
-                                            prior_goal_std_min=prior_goal_std_min,
-                                            prior_goal_std_max=prior_goal_std_max,
-                                            prior_balance_std_min=prior_balance_std_min,
-                                            prior_balance_std_max=prior_balance_std_max,
-                                            signals_dim=signals_dim,
-                                            prior_signal_std_min=prior_signal_std_min,
-                                            prior_signal_std_max=prior_signal_std_max)
+    task_generator = NavigationTaskGenerator(prior_goal_std_min=prior_goal_std_min,
+                                             prior_goal_std_max=prior_goal_std_max,
+                                             signals_dim=signals_dim,
+                                             prior_signal_std_min=prior_signal_std_min,
+                                             prior_signal_std_max=prior_signal_std_max)
+
     prior_std_max = task_generator.latent_max_std.tolist()
 
     if len(args.folder) == 0:
@@ -83,11 +134,12 @@ def main():
     prior_sequences, gp_list_sequences, init_prior = get_sequences(alpha=args.alpha_gp,
                                                                    n_restarts=args.n_restarts_gp,
                                                                    num_test_processes=args.num_test_processes,
-                                                                   std=noise_seq_std)
+                                                                   std=noise_seq_std,
+                                                                   num_signals=signals_dim)
 
     print("Algorithm start..")
     if args.algo == 'rl2':
-        obs_shape = (5,)  # 2 obs_shape + 2 action_shape + 1 reward
+        obs_shape = (2 + 1 + 2 + signals_dim,)  # obs_shape + action_shape + 1 reward
 
         agent = RL2(hidden_size=args.hidden_size,
                     use_elu=args.use_elu,
@@ -131,9 +183,10 @@ def main():
     elif args.algo == 'ts_opt':
         max_old = None
         min_old = None
-        obs_shape = (7,) # latent dim + obs
+        obs_shape = (latent_dim + 2 + signals_dim,)  # latent dim + obs
 
-        vi = InferenceNetwork(n_in=15, z_dim=latent_dim) # 2 action + 2 obs + 1 reward + 10 prior (latent dim * 2)
+        # 2 action + 2 obs + 1 reward + prior (latent dim * 2)
+        vi = InferenceNetwork(n_in=2 + 2 + 1 + signals_dim + latent_dim * 2, z_dim=latent_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = PosteriorOptTSAgent(vi=vi,
@@ -169,7 +222,7 @@ def main():
                                     min_old=min_old,
                                     use_decay_kld=args.use_decay_kld,
                                     decay_kld_rate=args.decay_kld_rate,
-                                    env_dim=2,
+                                    env_dim=2 + signals_dim,
                                     action_dim=2)
 
         vi_loss, eval_list, test_list, final_test = agent.train(n_train_iter=args.training_iter,
@@ -209,7 +262,7 @@ def main():
         obs_shape = (2 * latent_dim + 2 + signals_dim,)
 
         # 2 action + 2 obs + 1 reward + 4 prior (latent dim * 2)
-        vi = InferenceNetwork(n_in=obs_shape[0] + 1 + 2, z_dim=latent_dim, hidden_sizes=(64, 16))
+        vi = MujocoInferenceNetwork(n_in=obs_shape[0] + 1 + 2, z_dim=latent_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = OursAgent(action_space=action_space, device=device, gamma=args.gamma,
@@ -241,7 +294,7 @@ def main():
                           max_sigma=prior_std_max,
                           use_decay_kld=args.use_decay_kld,
                           decay_kld_rate=args.decay_kld_rate,
-                          env_dim=2+signals_dim,
+                          env_dim=2 + signals_dim,
                           action_dim=2
                           )
 

@@ -6,7 +6,7 @@ from functools import reduce
 from ppo_a2c.algo.ppo import PPO
 from ppo_a2c.model import MLPBase, Policy
 from ppo_a2c.storage import RolloutStorage
-from utilities.observation_utils import get_posterior_no_prev, augment_obs_optimal, augment_obs_oracle
+from utilities.observation_utils import get_posterior, augment_obs_optimal, augment_obs_oracle
 from inference.inference_utils import loss_inference_closed_form
 from ppo_a2c.envs import get_vec_envs_multi_task
 
@@ -259,10 +259,10 @@ class PosteriorOptTSAgent:
             if self.use_env_obs:
                 context[:, step, 1+self.action_dim:] = obs
 
-            posterior = get_posterior_no_prev(action=action, reward=reward, prior=prior,
-                                              max_action=self.max_action, min_action=self.min_action,
-                                              use_prev_state=use_prev_state, vi=self.vi,
-                                              env_obs=obs, use_env_obs=self.use_env_obs)
+            posterior = get_posterior(action=action, reward=reward, prior=prior,
+                                      max_action=self.max_action, min_action=self.min_action,
+                                      use_prev_state=use_prev_state, vi=self.vi,
+                                      env_obs=obs, use_env_obs=self.use_env_obs)
             obs = augment_obs_optimal(obs, self.latent_dim, posterior, self.use_env_obs, False,
                                       self.rescale_obs, self.max_old, self.min_old)
 
@@ -337,10 +337,10 @@ class PosteriorOptTSAgent:
             if self.use_env_obs:
                 context[:, step, 1+self.action_dim:] = obs
 
-            posterior = get_posterior_no_prev(action=action, reward=reward, prior=prior,
-                                              max_action=self.max_action, min_action=self.min_action,
-                                              use_prev_state=use_prev_state, vi=self.vi,
-                                              env_obs=obs, use_env_obs=self.use_env_obs)
+            posterior = get_posterior(action=action, reward=reward, prior=prior,
+                                      max_action=self.max_action, min_action=self.min_action,
+                                      use_prev_state=use_prev_state, vi=self.vi,
+                                      env_obs=obs, use_env_obs=self.use_env_obs)
             obs = augment_obs_optimal(obs, self.latent_dim, posterior, self.use_env_obs, False,
                                       self.rescale_obs, self.max_old, self.min_old)
 
@@ -406,10 +406,10 @@ class PosteriorOptTSAgent:
                         deterministic=False)
                 # Observe reward and next obs
                 obs, reward, done, infos = self.envs.step(action)
-                posterior = get_posterior_no_prev(self.vi, action, reward, prior_list,
-                                                  min_action=self.min_action, max_action=self.max_action,
-                                                  use_prev_state=use_prev_state, use_env_obs=self.use_env_obs,
-                                                  env_obs=obs)
+                posterior = get_posterior(self.vi, action, reward, prior_list,
+                                          min_action=self.min_action, max_action=self.max_action,
+                                          use_prev_state=use_prev_state, use_env_obs=self.use_env_obs,
+                                          env_obs=obs)
                 obs = augment_obs_optimal(obs, self.latent_dim, posterior, self.use_env_obs,
                                           False, self.rescale_obs, self.max_old, self.min_old)
                 use_prev_state = True
@@ -518,10 +518,10 @@ class PosteriorOptTSAgent:
                         deterministic=False)
 
                 obs, reward, done, infos = self.eval_envs.step(action)
-                posterior = get_posterior_no_prev(self.vi, action, reward, prior,
-                                                  min_action=self.min_action, max_action=self.max_action,
-                                                  use_prev_state=use_prev_state, use_env_obs=self.use_env_obs,
-                                                  env_obs=obs)
+                posterior = get_posterior(self.vi, action, reward, prior,
+                                          min_action=self.min_action, max_action=self.max_action,
+                                          use_prev_state=use_prev_state, use_env_obs=self.use_env_obs,
+                                          env_obs=obs)
                 obs = augment_obs_optimal(obs, self.latent_dim, posterior,
                                           self.use_env_obs, is_prior=False, rescale_obs=self.rescale_obs,
                                           max_old=self.max_old, min_old=self.min_old)
@@ -566,7 +566,7 @@ class PosteriorOptTSAgent:
                         if use_true_sigma:
                             prior_proc[1, dim] = sigma[0]
                         else:
-                            prior_proc[1, dim] = self.max_sigma[dim]
+                            prior_proc[1, dim] = self.max_sigma[dim] ** 2
                         curr_pred.append(y_pred[0][0])
                     prior.append(prior_proc)
                 prediction_mean.append(np.mean(curr_pred))

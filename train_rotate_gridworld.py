@@ -21,29 +21,26 @@ def get_sequences(alpha, n_restarts, num_test_processes, std):
 def main():
     print("Starting...")
     # Task family settings
-    folder = "result/oldgridwolrdv0/"
-    env_name = "gridworld-v0"
+    folder = "result/rotategridwolrdv0/"
+    env_name = "rotategridworld-v0"
 
     # Task family parameters
-    size = 40
-    goal_radius = 1
+    size = 10
+    goal_radius = 0.5
     prior_goal_std_min = 0.00001
-    prior_goal_std_max = 0.05
-    prior_balance_std_min = 0.00001
-    prior_balance_std_max = 0.2
-    prior_signal_std_min = 0.0001
-    prior_signal_std_max = 0.5
-    signals_dim = 2
-    latent_dim = 4 + signals_dim * 2  # (x,y) + (bal_x, bal_y) + num_sig * (x,y)
+    prior_goal_std_max = 0.2
+    prior_charge_std_min = 0.00001
+    prior_charge_std_max = 0.001
+    latent_dim = 2
 
     high_act = np.array([
         1,
-        1,
+        np.pi / 2,
     ], dtype=np.float32)
 
     low_act = np.array([
-        -1,
-        -1
+        0,
+        -np.pi / 2
     ], dtype=np.float32)
 
     action_space = spaces.Box(low=low_act, high=high_act)
@@ -67,11 +64,8 @@ def main():
                                             goal_radius=goal_radius,
                                             prior_goal_std_min=prior_goal_std_min,
                                             prior_goal_std_max=prior_goal_std_max,
-                                            prior_balance_std_min=prior_balance_std_min,
-                                            prior_balance_std_max=prior_balance_std_max,
-                                            signals_dim=signals_dim,
-                                            prior_signal_std_min=prior_signal_std_min,
-                                            prior_signal_std_max=prior_signal_std_max)
+                                            prior_charge_std_min=prior_charge_std_min,
+                                            prior_charge_std_max=prior_charge_std_max)
     prior_std_max = task_generator.latent_max_std.tolist()
 
     if len(args.folder) == 0:
@@ -131,7 +125,7 @@ def main():
     elif args.algo == 'ts_opt':
         max_old = None
         min_old = None
-        obs_shape = (7,) # latent dim + obs
+        obs_shape = (7, ) # latent dim + obs
 
         vi = InferenceNetwork(n_in=15, z_dim=latent_dim) # 2 action + 2 obs + 1 reward + 10 prior (latent dim * 2)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
@@ -169,7 +163,7 @@ def main():
                                     min_old=min_old,
                                     use_decay_kld=args.use_decay_kld,
                                     decay_kld_rate=args.decay_kld_rate,
-                                    env_dim=2,
+                                    env_dim=3,
                                     action_dim=2)
 
         vi_loss, eval_list, test_list, final_test = agent.train(n_train_iter=args.training_iter,
@@ -205,11 +199,9 @@ def main():
         vae_min_seq = 1
         vae_max_seq = args.num_steps
 
-        # 2 * latent_dim + obs
-        obs_shape = (2 * latent_dim + 2 + signals_dim,)
+        obs_shape = (7,) # 2 * latent_dim + obs
 
-        # 2 action + 2 obs + 1 reward + 4 prior (latent dim * 2)
-        vi = InferenceNetwork(n_in=obs_shape[0] + 1 + 2, z_dim=latent_dim, hidden_sizes=(64, 16))
+        vi = InferenceNetwork(n_in=10, z_dim=latent_dim, hidden_sizes=(64, 16)) # 2 action + 3 obs + 1 reward + 4 prior (latent dim * 2)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = OursAgent(action_space=action_space, device=device, gamma=args.gamma,
@@ -241,7 +233,7 @@ def main():
                           max_sigma=prior_std_max,
                           use_decay_kld=args.use_decay_kld,
                           decay_kld_rate=args.decay_kld_rate,
-                          env_dim=2+signals_dim,
+                          env_dim=3,
                           action_dim=2
                           )
 

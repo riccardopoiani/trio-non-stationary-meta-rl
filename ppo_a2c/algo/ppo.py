@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+import numpy
+
 """
 Code taken from: https://github.com/ikostrikov/pytorch-a2c-ppo-acktr-gail
 """
@@ -89,6 +91,10 @@ class PPO():
                 value_loss_epoch += value_loss.item()
                 action_loss_epoch += action_loss.item()
                 dist_entropy_epoch += dist_entropy.item()
+
+        if numpy.random.binomial(n=1, p=0):
+            t = (value_loss * self.value_loss_coef + action_loss - dist_entropy * self.entropy_coef)
+            print("Gradient {}".format(t.item()))
 
         num_updates = self.ppo_epoch * self.num_mini_batch
 

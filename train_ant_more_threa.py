@@ -5,10 +5,11 @@ import numpy as np
 import gym_sin
 from gym import spaces
 
-from inference.inference_network import InferenceNetwork
+from inference.inference_network import InferenceNetwork, MujocoInferenceNetwork
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
+from task.ant_task_generator import AntTaskGenerator
 from task.gridworld_task_generator import GridWorldTaskGenerator
 from utilities.arguments import get_args
 from utilities.folder_management import handle_folder_creation
@@ -21,30 +22,17 @@ def get_sequences(alpha, n_restarts, num_test_processes, std):
 def main():
     print("Starting...")
     # Task family settings
-    folder = "result/oldgridwolrdv0/"
-    env_name = "gridworld-v0"
+    folder = "result/ant/"
+    env_name = "antfriction-v0"
 
     # Task family parameters
-    size = 40
-    goal_radius = 1
-    prior_goal_std_min = 0.00001
-    prior_goal_std_max = 0.05
-    prior_balance_std_min = 0.00001
-    prior_balance_std_max = 0.2
-    prior_signal_std_min = 0.0001
-    prior_signal_std_max = 0.5
-    signals_dim = 2
-    latent_dim = 4 + signals_dim * 2  # (x,y) + (bal_x, bal_y) + num_sig * (x,y)
+    friction_std_min = 0.00001
+    friction_std_max = 0.2
+    latent_dim = 8
 
-    high_act = np.array([
-        1,
-        1,
-    ], dtype=np.float32)
+    high_act = np.ones(8, dtype=np.float32)
 
-    low_act = np.array([
-        -1,
-        -1
-    ], dtype=np.float32)
+    low_act = -np.ones(8, dtype=np.float32)
 
     action_space = spaces.Box(low=low_act, high=high_act)
 
@@ -60,18 +48,12 @@ def main():
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
 
-    torch.set_num_threads(1)
+    torch.set_num_threads(22)
     device = torch.device("cuda:0" if args.cuda else "cpu")
 
-    task_generator = GridWorldTaskGenerator(size=size,
-                                            goal_radius=goal_radius,
-                                            prior_goal_std_min=prior_goal_std_min,
-                                            prior_goal_std_max=prior_goal_std_max,
-                                            prior_balance_std_min=prior_balance_std_min,
-                                            prior_balance_std_max=prior_balance_std_max,
-                                            signals_dim=signals_dim,
-                                            prior_signal_std_min=prior_signal_std_min,
-                                            prior_signal_std_max=prior_signal_std_max)
+    task_generator = AntTaskGenerator(n_frictions=8,
+                                      friction_std_min=friction_std_min,
+                                      friction_std_max=friction_std_max)
     prior_std_max = task_generator.latent_max_std.tolist()
 
     if len(args.folder) == 0:
@@ -206,10 +188,10 @@ def main():
         vae_max_seq = args.num_steps
 
         # 2 * latent_dim + obs
-        obs_shape = (2 * latent_dim + 2 + signals_dim,)
+        obs_shape = (2 * latent_dim + 111,)
 
-        # 2 action + 2 obs + 1 reward + 4 prior (latent dim * 2)
-        vi = InferenceNetwork(n_in=obs_shape[0] + 1 + 2, z_dim=latent_dim, hidden_sizes=(64, 16))
+        # 8 action + (111 obs + 2 * latent_dim) + 1 reward
+        vi = MujocoInferenceNetwork(n_in=obs_shape[0] + 1 + 8, z_dim=latent_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = OursAgent(action_space=action_space, device=device, gamma=args.gamma,
@@ -241,8 +223,8 @@ def main():
                           max_sigma=prior_std_max,
                           use_decay_kld=args.use_decay_kld,
                           decay_kld_rate=args.decay_kld_rate,
-                          env_dim=2+signals_dim,
-                          action_dim=2
+                          env_dim=111,
+                          action_dim=8
                           )
 
         res_eval, res_vae, test_list, final_test = agent.train(training_iter=args.training_iter,

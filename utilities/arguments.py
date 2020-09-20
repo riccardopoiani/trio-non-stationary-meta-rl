@@ -60,6 +60,9 @@ def get_args():
     parser.add_argument('--cuda-deterministic', action='store_true', default=False,
                         help="sets flags for determinism when using CUDA (potentially slow!)")
 
+    # Environment specific settings
+    parser.add_argument('--num-signals', type=int, default=None)
+
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     assert args.algo in ['gp_ts', 'ours', 'ts_posterior', 'rl2', 'ts_opt']

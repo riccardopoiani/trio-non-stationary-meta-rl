@@ -2,7 +2,7 @@ import torch
 import numpy as np
 
 from functools import reduce
-from utilities.observation_utils import get_posterior_no_prev
+from utilities.observation_utils import get_posterior
 from inference.inference_utils import loss_inference_closed_form
 from ppo_a2c.envs import get_vec_envs_multi_task
 
@@ -156,9 +156,9 @@ class PosteriorTSAgent:
 
             vae_action, env_action = self.pull_action(posterior, self.num_processes, is_prior=is_prior)
             obs, reward, done, infos = self.envs.step(env_action)
-            posterior = get_posterior_no_prev(action=env_action, reward=reward, prior=prior,
-                                              max_action=self.max_action, min_action=self.min_action,
-                                              use_prev_state=use_prev_state, vi=self.vi)
+            posterior = get_posterior(action=env_action, reward=reward, prior=prior,
+                                      max_action=self.max_action, min_action=self.min_action,
+                                      use_prev_state=use_prev_state, vi=self.vi)
             context[:, step, 0] = vae_action.squeeze(1)
             context[:, step, 1] = reward.squeeze(1)
 
@@ -210,9 +210,9 @@ class PosteriorTSAgent:
 
             vae_action, env_action = self.pull_action(posterior, self.num_processes, is_prior=is_prior)
             obs, reward, done, infos = self.envs.step(env_action)
-            posterior = get_posterior_no_prev(action=env_action, reward=reward, prior=prior,
-                                              max_action=self.max_action, min_action=self.min_action,
-                                              use_prev_state=use_prev_state, vi=self.vi)
+            posterior = get_posterior(action=env_action, reward=reward, prior=prior,
+                                      max_action=self.max_action, min_action=self.min_action,
+                                      use_prev_state=use_prev_state, vi=self.vi)
             context[:, step, 0] = vae_action.squeeze(1)
             context[:, step, 1] = reward.squeeze(1)
 
@@ -270,9 +270,9 @@ class PosteriorTSAgent:
 
                 # Observe reward and next obs
                 obs, reward, done, infos = self.envs.step(env_action)
-                posterior = get_posterior_no_prev(self.vi, env_action, reward, prior_list,
-                                                  min_action=self.min_action, max_action=self.max_action,
-                                                  use_prev_state=use_prev_state)
+                posterior = get_posterior(self.vi, env_action, reward, prior_list,
+                                          min_action=self.min_action, max_action=self.max_action,
+                                          use_prev_state=use_prev_state)
                 use_prev_state = True
                 is_prior = False
                 for info in infos:
@@ -347,9 +347,9 @@ class PosteriorTSAgent:
                 _, env_action = self.pull_action(posterior, num_eval_processes, is_prior=is_prior)
 
                 obs, reward, done, infos = self.eval_envs.step(env_action)
-                posterior = get_posterior_no_prev(self.vi, env_action, reward, prior,
-                                                  min_action=self.min_action, max_action=self.max_action,
-                                                  use_prev_state=use_prev_state)
+                posterior = get_posterior(self.vi, env_action, reward, prior,
+                                          min_action=self.min_action, max_action=self.max_action,
+                                          use_prev_state=use_prev_state)
 
                 use_prev_state = True
                 is_prior = False
