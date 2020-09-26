@@ -4,14 +4,14 @@ from task.task_generator import TaskGenerator
 
 class AntTaskGenerator(TaskGenerator):
 
-    def __init__(self, friction_std_min, friction_std_max, n_frictions=8):
+    def __init__(self, friction_var_min, friction_var_max, n_frictions=8):
         super(AntTaskGenerator, self).__init__()
 
         self.latent_min_mean = -1 * torch.ones(n_frictions, dtype=torch.float32)
         self.latent_max_mean = torch.ones(n_frictions, dtype=torch.float32)
 
-        self.latent_min_std = friction_std_min * torch.ones(n_frictions, dtype=torch.float32)
-        self.latent_max_std = friction_std_max * torch.ones(n_frictions, dtype=torch.float32)
+        self.latent_min_std = (friction_var_min ** (1/2)) * torch.ones(n_frictions, dtype=torch.float32)
+        self.latent_max_std = (friction_var_max ** (1/2)) * torch.ones(n_frictions, dtype=torch.float32)
 
         self.latent_dim = n_frictions
 
@@ -36,7 +36,7 @@ class AntTaskGenerator(TaskGenerator):
 
         prior = [torch.tensor([mu[i].tolist(), std[i].pow(2).tolist()]) for i in range(num_processes)]
 
-        envs_kwargs = [{'frictions':new_tasks[i].numpy()}
+        envs_kwargs = [{'frictions': new_tasks[i].numpy()}
                        for i in range(num_processes)]
 
         return envs_kwargs, None, prior, new_tasks

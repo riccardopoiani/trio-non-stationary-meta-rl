@@ -46,27 +46,31 @@ class RL2:
                          use_clipped_value_loss=True)
         self.envs = None
         self.eval_envs = None
+        self.use_done = False
 
     def train(self, n_iter, env_name, seed, task_generator,
               eval_interval, num_test_processes, num_random_task_to_eval,
-              prior_task_sequences=None, log_dir=".", verbose=True):
+              task_len, prior_task_sequences=None, log_dir=".", verbose=True):
 
         eval_list = []
         test_list = []
 
+        if task_len > 1:
+            self.use_done = True
+
         for i in range(n_iter):
-            self.train_iter(env_name=env_name, seed=seed, task_generator=task_generator, log_dir=log_dir)
+            self.train_iter(env_name=env_name, seed=seed, task_generator=task_generator, log_dir=log_dir,
+                            task_len=task_len)
             if i % 10 == 0:
                 print("Iteration {} / {}".format(i, n_iter))
 
             if i % eval_interval == 0:
-                # if verbose:
-                #    print("Iteration {} / {}".format(i, n_iter))
                 e = self.evaluate(num_task_to_evaluate=num_random_task_to_eval, task_generator=task_generator,
                                   log_dir=log_dir, seed=seed, env_name=env_name)
                 eval_list.append(e)
 
-                e = self.meta_test(prior_task_sequences, task_generator, num_test_processes, env_name, seed, log_dir)
+                e = self.meta_test(prior_task_sequences, task_generator, num_test_processes, env_name, seed, log_dir,
+                                   task_len=task_len)
                 test_list.append(e)
 
         self.envs.close()
@@ -75,26 +79,35 @@ class RL2:
 
         return eval_list, test_list
 
-    def build_obs(self, obs, reward, action, is_init, use_obs_env, num_processes):
+    def build_obs(self, obs, reward, action, is_init, use_obs_env, done, num_processes):
         if is_init:
+            done = torch.zeros(num_processes, 1)
             reward = torch.zeros(num_processes, 1)
             action = torch.zeros(num_processes, self.action_dim)
+        else:
+            done = torch.FloatTensor([[1.0] if _done else [0.0] for _done in done])
 
         if use_obs_env:
-            new_obs = torch.cat([action, reward, obs], 1)
+            if self.use_done:
+                new_obs = torch.cat([done, action, reward, obs], 1)
+            else:
+                new_obs = torch.cat([action, reward, obs], 1)
         else:
-            new_obs = torch.cat([action, reward], 1)
+            if self.use_done:
+                new_obs = torch.cat([done, action, reward], 1)
+            else:
+                new_obs = torch.cat([action, reward], 1)
 
         return new_obs
 
-    def train_iter(self, env_name, seed, task_generator, log_dir):
+    def train_iter(self, env_name, seed, task_generator, log_dir, task_len):
         envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
         self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
                                             True, envs_kwargs, self.envs, num_frame_stack=None)
 
         obs = self.envs.reset()
         obs = self.build_obs(obs=obs, reward=None, action=None, is_init=True, use_obs_env=self.use_obs_env,
-                             num_processes=self.num_processes)
+                             num_processes=self.num_processes, done=None)
 
         rollouts_multi_task = RolloutStorage(self.num_steps, self.num_processes,
                                              self.obs_shape, self.action_space,
@@ -103,23 +116,35 @@ class RL2:
         rollouts_multi_task.obs[0].copy_(obs)
         rollouts_multi_task.to(self.device)
 
+        keep_init_if_done_masks = torch.FloatTensor([[1.0] for _ in range(self.num_processes)])
+        bad_masks = torch.FloatTensor([[1.0] or _ in range(self.num_processes)])
         for step in range(self.num_steps):
             # Sample actions
             with torch.no_grad():
-                value, action, action_log_prob, recurrent_hidden_states = self.actor_critic.act(
-                    rollouts_multi_task.obs[step], rollouts_multi_task.recurrent_hidden_states[step],
-                    rollouts_multi_task.masks[step])
+                if task_len == 1 or step == 0:
+                    value, action, action_log_prob, recurrent_hidden_states = self.actor_critic.act(
+                        rollouts_multi_task.obs[step], rollouts_multi_task.recurrent_hidden_states[step],
+                        rollouts_multi_task.masks[step]
+                    )
+                else:
+                    value, action, action_log_prob, recurrent_hidden_states = self.actor_critic.act(
+                        rollouts_multi_task.obs[step], rollouts_multi_task.recurrent_hidden_states[step],
+                        keep_init_if_done_masks)
 
             # Observe reward and next obs
             obs, reward, done, infos = self.envs.step(action)
             obs = self.build_obs(obs=obs, reward=reward, action=action, is_init=False, use_obs_env=self.use_obs_env,
-                                 num_processes=self.num_processes)
+                                 num_processes=self.num_processes, done=done)
 
             # If done then clean the history of observations.
-            masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
-            bad_masks = torch.FloatTensor([[0.0] if 'bad_transition' in info.keys() else [1.0] for info in infos])
-            rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
-                                       action_log_prob, value, reward, masks, bad_masks)
+            if self.use_done:
+                rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
+                                           action_log_prob, value, reward, keep_init_if_done_masks, bad_masks)
+            else:
+                masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
+                bad_masks = torch.FloatTensor([[0.0] if 'bad_transition' in info.keys() else [1.0] for info in infos])
+                rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
+                                           action_log_prob, value, reward, masks, bad_masks)
 
         with torch.no_grad():
             next_value = self.actor_critic.get_value(
@@ -148,7 +173,7 @@ class RL2:
 
             obs = self.envs.reset()
             obs = self.build_obs(obs=obs, reward=None, action=None, is_init=True, use_obs_env=self.use_obs_env,
-                                 num_processes=self.num_processes)
+                                 num_processes=self.num_processes, done=None)
 
             eval_recurrent_hidden_states = torch.zeros(
                 self.num_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
@@ -166,7 +191,7 @@ class RL2:
                 # Observe reward and next obs
                 obs, reward, done, infos = self.envs.step(action)
                 obs = self.build_obs(obs=obs, reward=reward, action=action, is_init=False, use_obs_env=self.use_obs_env,
-                                     num_processes=self.num_processes)
+                                     num_processes=self.num_processes, done=done)
 
                 eval_masks = torch.tensor(
                     [[0.0] if done_ else [1.0] for done_ in done],
@@ -185,54 +210,71 @@ class RL2:
         print("Evaluation using {} tasks. Mean reward: {}".format(num_task_to_evaluate, np.mean(r_epi_list)))
         return np.mean(r_epi_list)
 
-    def meta_test(self, prior_task_sequences, task_generator, num_test_processes, env_name, seed, log_dir):
+    def meta_test(self, prior_task_sequences, task_generator, num_test_processes, env_name, seed, log_dir,
+                  task_len):
 
         result_all = []
 
         for sequence in prior_task_sequences:
             sequence_rewards = []
             for prior in sequence:
-                kwargs = task_generator.sample_task_from_prior(prior)
-                temp = [kwargs for _ in range(num_test_processes)]
-                self.eval_envs = get_vec_envs_multi_task(env_name, seed, num_test_processes, self.gamma, log_dir,
-                                                         self.device, True, temp, self.eval_envs, num_frame_stack=None)
-
-                eval_episode_rewards = []
-
-                obs = self.eval_envs.reset()
-                obs = self.build_obs(obs=obs, reward=None, action=None, is_init=True, use_obs_env=self.use_obs_env,
-                                     num_processes=num_test_processes)
-
-                eval_recurrent_hidden_states = torch.zeros(
+                start_task = True
+                prev_episodes_hidden_states = torch.zeros(
                     num_test_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
-                eval_masks = torch.zeros(num_test_processes, 1, device=self.device)
-                already_ended = torch.zeros(num_test_processes, dtype=torch.bool)
-                while len(eval_episode_rewards) < num_test_processes:
-                    with torch.no_grad():
-                        _, action, _, eval_recurrent_hidden_states = self.actor_critic.act(
-                            obs,
-                            eval_recurrent_hidden_states,
-                            eval_masks,
-                            deterministic=False)
 
-                    # Observe reward and next obs
-                    obs, reward, done, infos = self.eval_envs.step(action)
-                    obs = self.build_obs(obs=obs, reward=reward, action=action, is_init=False,
-                                         use_obs_env=self.use_obs_env, num_processes=num_test_processes)
+                for _ in range(task_len):
+                    kwargs = task_generator.sample_task_from_prior(prior)
+                    temp = [kwargs for _ in range(num_test_processes)]
+                    self.eval_envs = get_vec_envs_multi_task(env_name, seed, num_test_processes, self.gamma, log_dir,
+                                                             self.device, True, temp, self.eval_envs,
+                                                             num_frame_stack=None)
 
-                    eval_masks = torch.tensor(
-                        [[0.0] if done_ else [1.0] for done_ in done],
-                        dtype=torch.float32,
-                        device=self.device)
+                    eval_episode_rewards = []
 
-                    for i, info in enumerate(infos):
-                        if 'episode' in info.keys() and not already_ended[i]:
-                            total_epi_reward = info['episode']['r']
-                            eval_episode_rewards.append(total_epi_reward)
-                    already_ended = already_ended | done
+                    obs = self.eval_envs.reset()
 
-                sequence_rewards.append(np.mean(eval_episode_rewards))
+                    obs = self.build_obs(obs=obs, reward=None, action=None, is_init=True, use_obs_env=self.use_obs_env,
+                                         num_processes=num_test_processes, done=None)
 
+                    if start_task:
+                        eval_recurrent_hidden_states = torch.zeros(
+                            num_test_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
+                        eval_masks = torch.zeros(num_test_processes, 1, device=self.device)
+                    else:
+                        eval_recurrent_hidden_states = prev_episodes_hidden_states
+                        eval_masks = torch.ones(num_test_processes, 1, device=self.device)
+                    start_task = False
+
+                    already_ended = torch.zeros(num_test_processes, dtype=torch.bool)
+
+                    while len(eval_episode_rewards) < num_test_processes:
+                        with torch.no_grad():
+                            _, action, _, eval_recurrent_hidden_states = self.actor_critic.act(
+                                obs,
+                                eval_recurrent_hidden_states,
+                                eval_masks,
+                                deterministic=False)
+
+                        # Observe reward and next obs
+                        obs, reward, done, infos = self.eval_envs.step(action)
+                        obs = self.build_obs(obs=obs, reward=reward, action=action, is_init=False,
+                                             use_obs_env=self.use_obs_env, num_processes=num_test_processes,
+                                             done=done)
+
+                        eval_masks = torch.tensor(
+                            [[0.0] if done_ else [1.0] for done_ in done],
+                            dtype=torch.float32,
+                            device=self.device)
+
+                        for i, info in enumerate(infos):
+                            if 'episode' in info.keys() and not already_ended[i]:
+                                total_epi_reward = info['episode']['r']
+                                eval_episode_rewards.append(total_epi_reward)
+                                prev_episodes_hidden_states[i] = eval_recurrent_hidden_states[i].clone().detach()
+                        already_ended = already_ended | done
+                    # print(np.mean(eval_episode_rewards))
+                    sequence_rewards.append(np.mean(eval_episode_rewards))
+            print("Sequence results {}".format(sequence_rewards))
             result_all.append(sequence_rewards)
 
         return result_all

@@ -10,7 +10,6 @@ from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
 from task.ant_task_generator import AntTaskGenerator
-from task.gridworld_task_generator import GridWorldTaskGenerator
 from utilities.arguments import get_args
 from utilities.folder_management import handle_folder_creation
 
@@ -26,8 +25,8 @@ def main():
     env_name = "antfriction-v0"
 
     # Task family parameters
-    friction_std_min = 0.00001
-    friction_std_max = 0.2
+    friction_var_min = 0.00001
+    friction_var_max = 0.04
     latent_dim = 8
 
     high_act = np.ones(8, dtype=np.float32)
@@ -37,7 +36,7 @@ def main():
     action_space = spaces.Box(low=low_act, high=high_act)
 
     # Other settings
-    noise_seq_std = 0.001
+    noise_seq_var = 0.001
 
     args = get_args()
 
@@ -52,9 +51,10 @@ def main():
     device = torch.device("cuda:0" if args.cuda else "cpu")
 
     task_generator = AntTaskGenerator(n_frictions=8,
-                                      friction_std_min=friction_std_min,
-                                      friction_std_max=friction_std_max)
+                                      friction_var_min=friction_var_min,
+                                      friction_var_max=friction_var_max)
     prior_std_max = task_generator.latent_max_std.tolist()
+    prior_std_min = task_generator.latent_min_std.tolist()
 
     if len(args.folder) == 0:
         folder = folder + args.algo + "/"
@@ -65,7 +65,7 @@ def main():
     prior_sequences, gp_list_sequences, init_prior = get_sequences(alpha=args.alpha_gp,
                                                                    n_restarts=args.n_restarts_gp,
                                                                    num_test_processes=args.num_test_processes,
-                                                                   std=noise_seq_std)
+                                                                   std=noise_seq_var ** (1/2))
 
     print("Algorithm start..")
     if args.algo == 'rl2':
@@ -88,7 +88,7 @@ def main():
                     gamma=args.gamma,
                     device=device,
                     num_steps=args.num_steps,
-                    action_dim=2,
+                    action_dim=8,
                     use_gae=args.use_gae,
                     gae_lambda=args.gae_lambda,
                     use_proper_time_limits=args.use_proper_time_limits)
@@ -102,7 +102,8 @@ def main():
                                            num_test_processes=args.num_test_processes,
                                            verbose=args.verbose,
                                            num_random_task_to_eval=args.num_random_task_to_eval,
-                                           prior_task_sequences=prior_sequences)
+                                           prior_task_sequences=prior_sequences,
+                                           task_len=args.task_len)
 
         with open("{}eval.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(eval_list, output)
@@ -115,7 +116,7 @@ def main():
         min_old = None
         obs_shape = (111+8,) # latent dim + obs
 
-        vi = InferenceNetwork(n_in=8+111+1+16, z_dim=latent_dim) # 2 action + 2 obs + 1 reward + 10 prior (latent dim * 2)
+        vi = MujocoInferenceNetwork(n_in=8+111+1+16, z_dim=latent_dim) # 2 action + 2 obs + 1 reward + 10 prior (latent dim * 2)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = PosteriorOptTSAgent(vi=vi,
@@ -129,6 +130,7 @@ def main():
                                     min_action=None,
                                     max_action=None,
                                     max_sigma=prior_std_max,
+                                    min_sigma=task_generator.latent_min_std.tolist(),
                                     action_space=action_space,
                                     obs_shape=obs_shape,
                                     clip_param=args.clip_param,
@@ -151,8 +153,9 @@ def main():
                                     min_old=min_old,
                                     use_decay_kld=args.use_decay_kld,
                                     decay_kld_rate=args.decay_kld_rate,
-                                    env_dim=2,
-                                    action_dim=2)
+                                    env_dim=111,
+                                    action_dim=8,
+                                    vae_max_steps=args.vae_max_steps)
 
         vi_loss, eval_list, test_list, final_test = agent.train(n_train_iter=args.training_iter,
                                                                 init_vae_steps=args.init_vae_steps,
@@ -168,7 +171,8 @@ def main():
                                                                 prior_sequences=prior_sequences,
                                                                 init_prior_sequences=init_prior,
                                                                 num_eval_processes=args.num_test_processes,
-                                                                vae_smart=args.vae_smart)
+                                                                vae_smart=args.vae_smart,
+                                                                task_len=args.task_len)
         with open("{}vae.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(vi_loss, output)
         with open("{}eval.pkl".format(folder_path_with_date), "wb") as output:
@@ -185,7 +189,7 @@ def main():
         max_old = None
         min_old = None
         vae_min_seq = 1
-        vae_max_seq = args.num_steps
+        vae_max_seq = args.vae_max_steps
 
         # 2 * latent_dim + obs
         obs_shape = (2 * latent_dim + 111,)
@@ -224,7 +228,8 @@ def main():
                           use_decay_kld=args.use_decay_kld,
                           decay_kld_rate=args.decay_kld_rate,
                           env_dim=111,
-                          action_dim=8
+                          action_dim=8,
+                          min_sigma=prior_std_min
                           )
 
         res_eval, res_vae, test_list, final_test = agent.train(training_iter=args.training_iter,
@@ -242,7 +247,8 @@ def main():
                                                                prior_sequences=prior_sequences,
                                                                init_prior_test_sequences=init_prior,
                                                                verbose=args.verbose,
-                                                               vae_smart=args.vae_smart
+                                                               vae_smart=args.vae_smart,
+                                                               task_len=args.task_len
                                                                )
 
         with open("{}vae.pkl".format(folder_path_with_date), "wb") as output:

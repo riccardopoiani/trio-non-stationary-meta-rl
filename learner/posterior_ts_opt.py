@@ -55,12 +55,15 @@ class PosteriorOptTSAgent:
                  use_decay_kld,
                  decay_kld_rate,
                  env_dim,
-                 action_dim):
+                 action_dim,
+                 min_sigma,
+                 vae_max_steps):
         # Inference inference
         self.vi = vi
         self.vi_optim = vi_optim
         self.use_decay_kld = use_decay_kld
         self.decay_kld_rate = decay_kld_rate
+        self.vae_max_steps = vae_max_steps
 
         # General settings
         self.use_env_obs = use_env_obs
@@ -71,6 +74,7 @@ class PosteriorOptTSAgent:
         self.max_action = max_action
 
         self.max_sigma = max_sigma
+        self.min_sigma = min_sigma
 
         # General
         self.num_processes = num_processes
@@ -115,7 +119,8 @@ class PosteriorOptTSAgent:
 
     def train(self, n_train_iter, init_vae_steps, eval_interval, task_generator, env_name, seed, log_dir, verbose,
               num_random_task_to_evaluate, gp_list_sequences, sw_size, prior_sequences,
-              init_prior_sequences, num_eval_processes, vae_smart):
+              init_prior_sequences, num_eval_processes, vae_smart,
+              task_len):
         eval_list = []
         test_list = []
         vi_loss = []
@@ -150,7 +155,8 @@ class PosteriorOptTSAgent:
                                              init_prior_sequences=init_prior_sequences,
                                              task_generator=task_generator,
                                              log_dir=log_dir, seed=seed, env_name=env_name,
-                                             store_history=False)
+                                             store_history=False,
+                                             task_len=task_len)
                 test_list.append(e)
 
         final_meta_test = self.meta_test_sequences(gp_list_sequences=gp_list_sequences,
@@ -159,7 +165,8 @@ class PosteriorOptTSAgent:
                                                    init_prior_sequences=init_prior_sequences,
                                                    task_generator=task_generator,
                                                    log_dir=log_dir, seed=seed, env_name=env_name,
-                                                   store_history=True)
+                                                   store_history=True,
+                                                   task_len=task_len)
         self.envs.close()
         if self.eval_envs is not None:
             self.eval_envs.close()
@@ -237,13 +244,13 @@ class PosteriorOptTSAgent:
         obs = augment_obs_optimal(obs, self.latent_dim, prior_policy, self.use_env_obs,
                                   is_prior=True, rescale_obs=self.rescale_obs,
                                   max_old=self.max_old, min_old=self.min_old)
-        rollouts_multi_task = RolloutStorage(self.num_steps, self.num_processes,
+        rollouts_multi_task = RolloutStorage(self.vae_max_steps, self.num_processes,
                                              self.obs_shape, self.action_space,
                                              self.actor_critic.recurrent_hidden_state_size)
         rollouts_multi_task.obs[0].copy_(obs)
         rollouts_multi_task.to(self.device)
 
-        num_data_context = torch.randint(low=1, high=self.num_steps, size=(1,)).item()
+        num_data_context = torch.randint(low=1, high=self.vae_max_steps, size=(1,)).item()
         context = torch.empty(self.num_processes, num_data_context, 1 + self.env_dim + self.action_dim)
 
         for step in range(num_data_context):
@@ -315,13 +322,13 @@ class PosteriorOptTSAgent:
         obs = augment_obs_optimal(obs, self.latent_dim, prior, self.use_env_obs,
                                   is_prior=True, rescale_obs=self.rescale_obs,
                                   max_old=self.max_old, min_old=self.min_old)
-        rollouts_multi_task = RolloutStorage(self.num_steps, self.num_processes,
+        rollouts_multi_task = RolloutStorage(self.vae_max_steps, self.num_processes,
                                              self.obs_shape, self.action_space,
                                              self.actor_critic.recurrent_hidden_state_size)
         rollouts_multi_task.obs[0].copy_(obs)
         rollouts_multi_task.to(self.device)
 
-        num_data_context = torch.randint(low=1, high=self.num_steps, size=(1,)).item()
+        num_data_context = torch.randint(low=1, high=self.vae_max_steps, size=(1,)).item()
         context = torch.empty(self.num_processes, num_data_context, 1 + self.env_dim + self.action_dim)
 
         for step in range(num_data_context):
@@ -432,7 +439,8 @@ class PosteriorOptTSAgent:
         return np.mean(r_epi_list)
 
     def meta_test_sequences(self, gp_list_sequences, sw_size, env_name, seed, log_dir, prior_sequences,
-                            init_prior_sequences, num_eval_processes, task_generator, store_history):
+                            init_prior_sequences, num_eval_processes, task_generator, store_history,
+                            task_len):
         r_all_true_sigma = []
         r_all_false_sigma = []
         r_all_real_prior = []
@@ -449,8 +457,10 @@ class PosteriorOptTSAgent:
             r, posterior_history, prediction_mean = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size,
                                                                             env_name, seed, log_dir,
                                                                             env_kwargs_list, p,
-                                                                            num_eval_processes, use_true_sigma=True,
-                                                                            use_real_prior=False)
+                                                                            num_eval_processes,
+                                                                            use_true_sigma=True,
+                                                                            use_real_prior=False,
+                                                                            task_len=task_len)
             print("Using GP True sigma{}".format(np.mean(r)))
             r_all_true_sigma.append(r)
             prediction_mean_true.append(prediction_mean)
@@ -459,17 +469,26 @@ class PosteriorOptTSAgent:
             r, posterior_history, prediction_mean = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size,
                                                                             env_name, seed, log_dir,
                                                                             env_kwargs_list, p,
-                                                                            num_eval_processes, use_true_sigma=False,
-                                                                            use_real_prior=False)
+                                                                            num_eval_processes,
+                                                                            use_true_sigma=False,
+                                                                            use_real_prior=False,
+                                                                            task_len=task_len)
             print("Using GP False sigma {}".format(np.mean(r)))
             r_all_false_sigma.append(r)
             posterior_history_false.append(posterior_history)
             prediction_mean_false.append(prediction_mean)
 
-            r, _, _ = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size, env_name, seed, log_dir,
+            r, _, _ = self.test_task_sequence(gp_list_sequences[seq_idx],
+                                              sw_size,
+                                              env_name,
+                                              seed,
+                                              log_dir,
                                               env_kwargs_list, p,
-                                              num_eval_processes, use_true_sigma=None, use_real_prior=True,
-                                              true_prior_sequence=s)
+                                              num_eval_processes,
+                                              use_true_sigma=None,
+                                              use_real_prior=True,
+                                              true_prior_sequence=s,
+                                              task_len=task_len)
             r_all_real_prior.append(r)
             print("Using real prior {}".format(np.mean(r)))
 
@@ -480,7 +499,8 @@ class PosteriorOptTSAgent:
             return r_all_true_sigma, r_all_false_sigma, r_all_real_prior
 
     def test_task_sequence(self, gp_list, sw_size, env_name, seed, log_dir, envs_kwargs_list, init_prior,
-                           num_eval_processes, use_true_sigma, use_real_prior, true_prior_sequence=None):
+                           num_eval_processes, use_true_sigma, use_real_prior, task_len,
+                           true_prior_sequence=None):
         print("Meta-testing...")
 
         num_tasks = len(envs_kwargs_list)
@@ -492,53 +512,59 @@ class PosteriorOptTSAgent:
         posterior_history = torch.empty(num_tasks, num_eval_processes, 2 * self.latent_dim)
 
         for t, kwargs in enumerate(envs_kwargs_list):
-            # Task creation
-            temp = [kwargs for _ in range(num_eval_processes)]
-            self.eval_envs = get_vec_envs_multi_task(env_name, seed, num_eval_processes, self.gamma, log_dir,
-                                                     self.device,
-                                                     True, temp, self.eval_envs, num_frame_stack=None)
-
-            obs = self.eval_envs.reset()
-            obs = augment_obs_optimal(obs, self.latent_dim, prior,
-                                      self.use_env_obs, is_prior=True, rescale_obs=self.rescale_obs,
-                                      max_old=self.max_old, min_old=self.min_old)
-            eval_recurrent_hidden_states = torch.zeros(
-                num_eval_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
-            eval_masks = torch.zeros(num_eval_processes, 1, device=self.device)
-
             use_prev_state = False
-            task_epi_rewards = []
-            already_ended = torch.zeros(num_eval_processes, dtype=torch.bool)
-            while len(task_epi_rewards) < num_eval_processes:
-                with torch.no_grad():
-                    _, action, _, eval_recurrent_hidden_states = self.actor_critic.act(
-                        obs,
-                        eval_recurrent_hidden_states,
-                        eval_masks,
-                        deterministic=False)
+            for _ in range(task_len):
+                # Task creation
+                temp = [kwargs for _ in range(num_eval_processes)]
+                self.eval_envs = get_vec_envs_multi_task(env_name, seed, num_eval_processes, self.gamma, log_dir,
+                                                         self.device,
+                                                         True, temp, self.eval_envs, num_frame_stack=None)
 
-                obs, reward, done, infos = self.eval_envs.step(action)
-                posterior = get_posterior(self.vi, action, reward, prior,
-                                          min_action=self.min_action, max_action=self.max_action,
-                                          use_prev_state=use_prev_state, use_env_obs=self.use_env_obs,
-                                          env_obs=obs)
-                obs = augment_obs_optimal(obs, self.latent_dim, posterior,
-                                          self.use_env_obs, is_prior=False, rescale_obs=self.rescale_obs,
-                                          max_old=self.max_old, min_old=self.min_old)
+                obs = self.eval_envs.reset()
+                if not use_prev_state:
+                    obs = augment_obs_optimal(obs, self.latent_dim, prior,
+                                              self.use_env_obs, is_prior=True, rescale_obs=self.rescale_obs,
+                                              max_old=self.max_old, min_old=self.min_old)
+                else:
+                    obs = augment_obs_optimal(obs, self.latent_dim, posterior_history[t, :, :],
+                                              self.use_env_obs, is_prior=False, rescale_obs=self.rescale_obs,
+                                              max_old=self.max_old, min_old=self.min_old)
+                eval_recurrent_hidden_states = torch.zeros(
+                    num_eval_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
+                eval_masks = torch.zeros(num_eval_processes, 1, device=self.device)
 
-                use_prev_state = True
-                eval_masks = torch.tensor(
-                    [[0.0] if done_ else [1.0] for done_ in done],
-                    dtype=torch.float32,
-                    device=self.device)
-                for i, info in enumerate(infos):
-                    if 'episode' in info.keys() and not already_ended[i]:
-                        posterior_history[t, i, :] = posterior[i]
-                        total_epi_reward = info['episode']['r']
-                        task_epi_rewards.append(total_epi_reward)
-                already_ended = already_ended | done
+                task_epi_rewards = []
+                already_ended = torch.zeros(num_eval_processes, dtype=torch.bool)
+                while len(task_epi_rewards) < num_eval_processes:
+                    with torch.no_grad():
+                        _, action, _, eval_recurrent_hidden_states = self.actor_critic.act(
+                            obs,
+                            eval_recurrent_hidden_states,
+                            eval_masks,
+                            deterministic=False)
 
-            eval_episode_rewards.append(np.mean(task_epi_rewards))
+                    obs, reward, done, infos = self.eval_envs.step(action)
+                    posterior = get_posterior(self.vi, action, reward, prior,
+                                              min_action=self.min_action, max_action=self.max_action,
+                                              use_prev_state=use_prev_state, use_env_obs=self.use_env_obs,
+                                              env_obs=obs)
+                    obs = augment_obs_optimal(obs, self.latent_dim, posterior,
+                                              self.use_env_obs, is_prior=False, rescale_obs=self.rescale_obs,
+                                              max_old=self.max_old, min_old=self.min_old)
+
+                    use_prev_state = True
+                    eval_masks = torch.tensor(
+                        [[0.0] if done_ else [1.0] for done_ in done],
+                        dtype=torch.float32,
+                        device=self.device)
+                    for i, info in enumerate(infos):
+                        if 'episode' in info.keys() and not already_ended[i]:
+                            posterior_history[t, i, :] = posterior[i].clone().detach()
+                            total_epi_reward = info['episode']['r']
+                            task_epi_rewards.append(total_epi_reward)
+                    already_ended = already_ended | done
+
+                eval_episode_rewards.append(np.mean(task_epi_rewards))
 
             # Retrieve new prior for the identified model so far
             if use_real_prior and t + 1 < len(true_prior_sequence):
@@ -564,7 +590,10 @@ class PosteriorOptTSAgent:
                         y_pred, sigma = gp_list[dim][proc].predict(x_points, return_std=True)
                         prior_proc[0, dim] = y_pred[0, 0]
                         if use_true_sigma:
-                            prior_proc[1, dim] = sigma[0]
+                            if self.min_sigma[dim] > sigma[0]:
+                                prior_proc[1, dim] = self.min_sigma[dim] ** 2
+                            else:
+                                prior_proc[1, dim] = sigma[0]
                         else:
                             prior_proc[1, dim] = self.max_sigma[dim] ** 2
                         curr_pred.append(y_pred[0][0])

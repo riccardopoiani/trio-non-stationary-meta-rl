@@ -5,10 +5,10 @@ from task.task_generator import TaskGenerator
 
 class NavigationTaskGenerator(TaskGenerator):
 
-    def __init__(self, prior_goal_std_min,
-                 prior_goal_std_max,
-                 prior_signal_std_min,
-                 prior_signal_std_max,
+    def __init__(self, prior_goal_var_min,
+                 prior_goal_var_max,
+                 prior_signal_var_min,
+                 prior_signal_var_max,
                  signals_dim):
         super(NavigationTaskGenerator, self).__init__()
 
@@ -19,13 +19,13 @@ class NavigationTaskGenerator(TaskGenerator):
         self.latent_min_mean = -1 * torch.ones(self.latent_dim, dtype=torch.float32)
         self.latent_max_mean = 1 * torch.ones(self.latent_dim, dtype=torch.float32)
 
-        self.latent_min_std = torch.tensor([prior_goal_std_min], dtype=torch.float32)
+        self.latent_min_std = torch.tensor([prior_goal_var_min ** (1/2)], dtype=torch.float32)
         self.latent_min_std = torch.cat(
-            [self.latent_min_std, torch.tensor([prior_signal_std_min]).repeat(2 * signals_dim)])
+            [self.latent_min_std, torch.tensor([prior_signal_var_min ** (1/2)]).repeat(2 * signals_dim)])
 
-        self.latent_max_std = torch.tensor([prior_goal_std_max], dtype=torch.float32)
+        self.latent_max_std = torch.tensor([prior_goal_var_max ** (1/2)], dtype=torch.float32)
         self.latent_max_std = torch.cat(
-            [self.latent_max_std, torch.tensor([prior_signal_std_max]).repeat(2 * signals_dim)])
+            [self.latent_max_std, torch.tensor([prior_signal_var_max ** (1/2)]).repeat(2 * signals_dim)])
 
     def create_task_family(self, n_tasks, n_batches=1, test_perc=0, batch_size=160):
         raise NotImplemented

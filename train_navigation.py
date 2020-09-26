@@ -1,13 +1,13 @@
 import pickle
 
-import torch
 import numpy as np
-import gym_sin
+import torch
+import custom_env
 from gym import spaces
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
-from inference.inference_network import InferenceNetwork, MujocoInferenceNetwork
+from inference.inference_network import MujocoInferenceNetwork
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
@@ -16,7 +16,8 @@ from utilities.arguments import get_args
 from utilities.folder_management import handle_folder_creation
 
 
-def get_alternating_sequences(alpha, n_restarts, num_test_processes, std, num_signals):
+def get_alternating_sequences(alpha, n_restarts, num_test_processes, var_seq, num_signals):
+    std = var_seq ** (1 / 2)
     # Creating GPs
     kernel = C(1.0, (1e-8, 1e8)) * RBF(1, (1e-8, 1e8))
     gp_list = []
@@ -33,7 +34,7 @@ def get_alternating_sequences(alpha, n_restarts, num_test_processes, std, num_si
 
     # Creating prior distribution
     p_min = [-1]
-    p_var = [std]
+    p_var = [std ** 2]
     for _ in range(2 * num_signals):
         p_min.append(0)
         p_var.append(std ** 2)
@@ -42,7 +43,7 @@ def get_alternating_sequences(alpha, n_restarts, num_test_processes, std, num_si
 
     # Create prior sequence
     prior_seq = []
-    for idx in range(50):
+    for idx in range(10):
         p_min = []
         p_var = []
         if idx <= 20:
@@ -67,13 +68,14 @@ def get_alternating_sequences(alpha, n_restarts, num_test_processes, std, num_si
     return gp_list, prior_seq, init_prior_test
 
 
-def get_sequences(alpha, n_restarts, num_test_processes, std, num_signals):
+def get_sequences(alpha, n_restarts, num_test_processes, var_seq, num_signals):
     gp_list, prior_seq, init_prior_test = get_alternating_sequences(alpha=alpha,
                                                                     n_restarts=n_restarts,
                                                                     num_test_processes=num_test_processes,
-                                                                    std=std,
+                                                                    var_seq=var_seq,
                                                                     num_signals=num_signals)
     return [prior_seq], [gp_list], [init_prior_test]
+    # return [], [], []
 
 
 def main():
@@ -82,13 +84,13 @@ def main():
 
     # Task family settings
     folder = "result/navigationv0/"
-    env_name = "navigation-v0"
+    env_name = "goalnavigation-v0"
 
     # Task family parameters
-    prior_goal_std_min = 0.00001
-    prior_goal_std_max = 0.2
-    prior_signal_std_min = 0.0001
-    prior_signal_std_max = 0.7
+    prior_goal_var_min = 0.0001
+    prior_goal_var_max = 0.2
+    prior_signal_var_min = 0.01
+    prior_signal_var_max = 0.4
     signals_dim = args.num_signals
     latent_dim = 1 + signals_dim * 2  # (x,y) + (bal_x, bal_y) + num_sig * (x,y)
 
@@ -105,7 +107,7 @@ def main():
     action_space = spaces.Box(low=low_act, high=high_act)
 
     # Other settings
-    noise_seq_std = 0.001
+    var_seq = 0.00001
 
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
@@ -117,13 +119,14 @@ def main():
     torch.set_num_threads(1)
     device = torch.device("cuda:0" if args.cuda else "cpu")
 
-    task_generator = NavigationTaskGenerator(prior_goal_std_min=prior_goal_std_min,
-                                             prior_goal_std_max=prior_goal_std_max,
-                                             signals_dim=signals_dim,
-                                             prior_signal_std_min=prior_signal_std_min,
-                                             prior_signal_std_max=prior_signal_std_max)
+    task_generator = NavigationTaskGenerator(prior_goal_var_min=prior_goal_var_min,
+                                             prior_goal_var_max=prior_goal_var_max,
+                                             prior_signal_var_min=prior_signal_var_min,
+                                             prior_signal_var_max=prior_signal_var_max,
+                                             signals_dim=signals_dim)
 
     prior_std_max = task_generator.latent_max_std.tolist()
+    prior_std_min = task_generator.latent_min_std.tolist()
 
     if len(args.folder) == 0:
         folder = folder + args.algo + "/"
@@ -134,7 +137,7 @@ def main():
     prior_sequences, gp_list_sequences, init_prior = get_sequences(alpha=args.alpha_gp,
                                                                    n_restarts=args.n_restarts_gp,
                                                                    num_test_processes=args.num_test_processes,
-                                                                   std=noise_seq_std,
+                                                                   var_seq=var_seq,
                                                                    num_signals=signals_dim)
 
     print("Algorithm start..")
@@ -172,7 +175,8 @@ def main():
                                            num_test_processes=args.num_test_processes,
                                            verbose=args.verbose,
                                            num_random_task_to_eval=args.num_random_task_to_eval,
-                                           prior_task_sequences=prior_sequences)
+                                           prior_task_sequences=prior_sequences,
+                                           task_len=args.task_len)
 
         with open("{}eval.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(eval_list, output)
@@ -186,7 +190,7 @@ def main():
         obs_shape = (latent_dim + 2 + signals_dim,)  # latent dim + obs
 
         # 2 action + 2 obs + 1 reward + prior (latent dim * 2)
-        vi = InferenceNetwork(n_in=2 + 2 + 1 + signals_dim + latent_dim * 2, z_dim=latent_dim)
+        vi = MujocoInferenceNetwork(n_in=2 + 2 + 1 + signals_dim + latent_dim * 2, z_dim=latent_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = PosteriorOptTSAgent(vi=vi,
@@ -223,7 +227,9 @@ def main():
                                     use_decay_kld=args.use_decay_kld,
                                     decay_kld_rate=args.decay_kld_rate,
                                     env_dim=2 + signals_dim,
-                                    action_dim=2)
+                                    action_dim=2,
+                                    min_sigma=prior_std_min,
+                                    vae_max_steps=args.vae_max_steps)
 
         vi_loss, eval_list, test_list, final_test = agent.train(n_train_iter=args.training_iter,
                                                                 init_vae_steps=args.init_vae_steps,
@@ -239,7 +245,8 @@ def main():
                                                                 prior_sequences=prior_sequences,
                                                                 init_prior_sequences=init_prior,
                                                                 num_eval_processes=args.num_test_processes,
-                                                                vae_smart=args.vae_smart)
+                                                                vae_smart=args.vae_smart,
+                                                                task_len=args.task_len)
         with open("{}vae.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(vi_loss, output)
         with open("{}eval.pkl".format(folder_path_with_date), "wb") as output:
@@ -256,7 +263,6 @@ def main():
         max_old = None
         min_old = None
         vae_min_seq = 1
-        vae_max_seq = args.num_steps
 
         # 2 * latent_dim + obs
         obs_shape = (2 * latent_dim + 2 + signals_dim,)
@@ -288,14 +294,15 @@ def main():
                           max_old=max_old,
                           min_old=min_old,
                           vae_min_seq=vae_min_seq,
-                          vae_max_seq=vae_max_seq,
+                          vae_max_seq=args.vae_max_steps,
                           max_action=None,
                           min_action=None,
                           max_sigma=prior_std_max,
                           use_decay_kld=args.use_decay_kld,
                           decay_kld_rate=args.decay_kld_rate,
                           env_dim=2 + signals_dim,
-                          action_dim=2
+                          action_dim=2,
+                          min_sigma=prior_std_min
                           )
 
         res_eval, res_vae, test_list, final_test = agent.train(training_iter=args.training_iter,
@@ -313,8 +320,8 @@ def main():
                                                                prior_sequences=prior_sequences,
                                                                init_prior_test_sequences=init_prior,
                                                                verbose=args.verbose,
-                                                               vae_smart=args.vae_smart
-                                                               )
+                                                               vae_smart=args.vae_smart,
+                                                               task_len=args.task_len)
 
         with open("{}vae.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(res_vae, output)

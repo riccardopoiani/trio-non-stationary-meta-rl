@@ -34,7 +34,7 @@ def get_args():
     # GP parameters
     parser.add_argument('--n-restarts-gp', default=1, type=int, help="number of restarts for GP at meta-test time")
     parser.add_argument('--alpha-gp', default=0.25, type=float, help="alpha parameter for GP at meta-test time")
-    parser.add_argument('--sw-size', default=10, type=int, help="GP will use only the last sw number of samples")
+    parser.add_argument('--sw-size', default=10000, type=int, help="GP will use only the last sw number of samples")
 
     # Variational inference
     parser.add_argument('--init-vae-steps', default=1000, type=int, help="initial number of inference training step")
@@ -42,6 +42,7 @@ def get_args():
     parser.add_argument('--vae-lr', type=float, default=1e-3)
     parser.add_argument('--use-decay-kld', type=lambda x: int(x) != 0, default=True)
     parser.add_argument('--decay-kld-rate', type=float, default=None)
+    parser.add_argument('--vae-max-steps', type=int, default=None)
 
     # General settings
     parser.add_argument('--training-iter', default=10000, type=int, help="number of training iterations")
@@ -49,11 +50,12 @@ def get_args():
     parser.add_argument('--eval-interval', type=int, default=20, help="evaluate agent every x iteration")
     parser.add_argument('--log-dir', type=str, default=".")
     parser.add_argument('--num-random-task-to-eval', type=int, default=128, help="number of random task to evalute")
-    parser.add_argument('--num-test-processes', type=int, default=2, help="number of processes to be used at meta-test time")
+    parser.add_argument('--num-test-processes', type=int, default=1, help="number of processes to be used at meta-test time")
     parser.add_argument('--seed', type=int, default=1, help='random seed (default: 1)')
     parser.add_argument('--num-processes', type=int, default=1, help="number of envs that will be run in parallalel")
     parser.add_argument('--verbose', type=lambda x: int(x) != 0, default=True)
     parser.add_argument('--folder', type=str, default="")
+    parser.add_argument('--task-len', type=int, default=1)
 
     # Cuda parameters
     parser.add_argument('--no-cuda', action='store_true', default=True, help='disables CUDA training')
@@ -66,5 +68,8 @@ def get_args():
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     assert args.algo in ['gp_ts', 'ours', 'ts_posterior', 'rl2', 'ts_opt']
+
+    if args.vae_max_steps is None:
+        args.vae_max_steps = args.num_steps
 
     return args

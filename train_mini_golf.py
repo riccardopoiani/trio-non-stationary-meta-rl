@@ -16,7 +16,7 @@ from utilities.arguments import get_args
 from utilities.folder_management import handle_folder_creation
 
 
-def get_sin_task_sequence(alpha, n_restarts, num_test_processes, std=0.00000001):
+def get_sin_task_sequence(alpha, n_restarts, num_test_processes, std):
     kernel = C(1.0, (1e-8, 1e8)) * RBF(1, (1e-8, 1e8))
 
     gp_list = []
@@ -31,13 +31,13 @@ def get_sin_task_sequence(alpha, n_restarts, num_test_processes, std=0.00000001)
     offset = -0.7
     a = -0.2
 
-    init_prior_test = [torch.tensor([[a * np.sin(0) + offset], [std]], dtype=torch.float32)
+    init_prior_test = [torch.tensor([[a * np.sin(0) + offset], [std**2]], dtype=torch.float32)
                        for _ in range(num_test_processes)]
 
     prior_seq = []
     for idx in range(300):
         friction = a * np.sin(f * idx) + offset
-        prior_seq.append(torch.tensor([[friction], [std]], dtype=torch.float32))
+        prior_seq.append(torch.tensor([[friction], [std**2]], dtype=torch.float32))
 
     return gp_list, prior_seq, init_prior_test
 
@@ -58,9 +58,9 @@ def main():
     # Task family settings
     folder = "result/minigolfv0/"
     env_name = "minigolf-v0"
-    prior_std_min = 0.0001
-    prior_std_max = 0.4
-    noise_seq_std = 0.00000001
+    prior_var_min = 0.001
+    prior_var_max = 0.2
+    noise_seq_var = 0.001
     latent_dim = 1
     min_action = 1e-5
     max_action = 10.
@@ -79,8 +79,8 @@ def main():
     torch.set_num_threads(1)
     device = torch.device("cuda:0" if args.cuda else "cpu")
 
-    task_generator = MiniGolfTaskGenerator(prior_std_min=prior_std_min,
-                                           prior_std_max=prior_std_max)
+    task_generator = MiniGolfTaskGenerator(prior_var_min=prior_var_min,
+                                           prior_var_max=prior_var_max)
 
     if len(args.folder) == 0:
         folder = folder + args.algo + "/"
@@ -91,11 +91,11 @@ def main():
     prior_sequences, gp_list_sequences, init_prior = get_sequences(alpha=args.alpha_gp,
                                                                    n_restarts=args.n_restarts_gp,
                                                                    num_test_processes=args.num_test_processes,
-                                                                   std=noise_seq_std)
+                                                                   std=noise_seq_var ** (1 / 2))
 
     print("Algorithm start..")
     if args.algo == 'rl2':
-        obs_shape = (3,)
+        obs_shape = (4,)
 
         agent = RL2(hidden_size=args.hidden_size,
                     use_elu=args.use_elu,
@@ -128,7 +128,8 @@ def main():
                                            num_test_processes=args.num_test_processes,
                                            verbose=args.verbose,
                                            num_random_task_to_eval=args.num_random_task_to_eval,
-                                           prior_task_sequences=prior_sequences)
+                                           prior_task_sequences=prior_sequences,
+                                           task_len=args.task_len)
 
         with open("{}eval.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(eval_list, output)
@@ -154,7 +155,8 @@ def main():
                                     use_env_obs=True,
                                     min_action=None,
                                     max_action=None,
-                                    max_sigma=[prior_std_max],
+                                    max_sigma=[prior_var_max ** (1 / 2)],
+                                    min_sigma=[prior_var_min ** (1 / 2)],
                                     action_space=action_space,
                                     obs_shape=obs_shape,
                                     clip_param=args.clip_param,
@@ -178,7 +180,8 @@ def main():
                                     use_decay_kld=args.use_decay_kld,
                                     decay_kld_rate=args.decay_kld_rate,
                                     env_dim=1,
-                                    action_dim=1)
+                                    action_dim=1,
+                                    vae_max_steps=args.vae_max_steps)
 
         vi_loss, eval_list, test_list, final_test = agent.train(n_train_iter=args.training_iter,
                                                                 init_vae_steps=args.init_vae_steps,
@@ -194,7 +197,8 @@ def main():
                                                                 prior_sequences=prior_sequences,
                                                                 init_prior_sequences=init_prior,
                                                                 num_eval_processes=args.num_test_processes,
-                                                                vae_smart=args.vae_smart)
+                                                                vae_smart=args.vae_smart,
+                                                                task_len=args.task_len)
         with open("{}vae.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(vi_loss, output)
         with open("{}eval.pkl".format(folder_path_with_date), "wb") as output:
@@ -211,21 +215,26 @@ def main():
         max_old = None
         min_old = None
         vae_min_seq = 1
-        vae_max_seq = args.num_steps
+        vae_max_seq = args.vae_max_steps
 
         obs_shape = (3,)
 
         vi = InferenceNetwork(n_in=5, z_dim=latent_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
-        agent = OursAgent(action_space=action_space, device=device, gamma=args.gamma,
-                          num_steps=args.num_steps, num_processes=args.num_processes,
-                          clip_param=args.clip_param, ppo_epoch=args.ppo_epoch,
+        agent = OursAgent(action_space=action_space,
+                          device=device,
+                          gamma=args.gamma,
+                          num_steps=args.num_steps,
+                          num_processes=args.num_processes,
+                          clip_param=args.clip_param,
+                          ppo_epoch=args.ppo_epoch,
                           num_mini_batch=args.num_mini_batch,
                           value_loss_coef=args.value_loss_coef,
                           entropy_coef=args.entropy_coef,
                           lr=args.ppo_lr,
-                          eps=args.ppo_eps, max_grad_norm=args.max_grad_norm,
+                          eps=args.ppo_eps,
+                          max_grad_norm=args.max_grad_norm,
                           use_linear_lr_decay=args.use_linear_lr_decay,
                           use_gae=args.use_gae,
                           gae_lambda=args.gae_lambda,
@@ -244,7 +253,8 @@ def main():
                           vae_max_seq=vae_max_seq,
                           max_action=None,
                           min_action=None,
-                          max_sigma=[prior_std_max],
+                          max_sigma=[prior_var_max ** (1 / 2)],
+                          min_sigma=[prior_var_min ** (1 / 2)],
                           use_decay_kld=args.use_decay_kld,
                           decay_kld_rate=args.decay_kld_rate,
                           env_dim=1,
@@ -266,8 +276,8 @@ def main():
                                                                prior_sequences=prior_sequences,
                                                                init_prior_test_sequences=init_prior,
                                                                verbose=args.verbose,
-                                                               vae_smart=args.vae_smart
-                                                               )
+                                                               vae_smart=args.vae_smart,
+                                                               task_len=args.task_len)
 
         with open("{}vae.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(res_vae, output)
