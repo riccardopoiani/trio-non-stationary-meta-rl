@@ -30,10 +30,10 @@ def get_args():
     parser.add_argument('--use-gae', default=False, type=lambda x: int(x) != 0)
     parser.add_argument('--gae_lambda', default=0.95, type=float)
     parser.add_argument('--use-proper-time-limits', default=False, type=lambda x: int(x) != 0)
+    parser.add_argument('--use-xavier', default=False, type=lambda x: int(x) != 0)
 
     # GP parameters
-    parser.add_argument('--n-restarts-gp', default=1, type=int, help="number of restarts for GP at meta-test time")
-    parser.add_argument('--alpha-gp', default=0.25, type=float, help="alpha parameter for GP at meta-test time")
+    parser.add_argument('--n-restarts-gp', default=10, type=int, help="number of restarts for GP at meta-test time")
     parser.add_argument('--sw-size', default=10000, type=int, help="GP will use only the last sw number of samples")
 
     # Variational inference

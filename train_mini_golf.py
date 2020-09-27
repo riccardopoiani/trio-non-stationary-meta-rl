@@ -16,13 +16,12 @@ from utilities.arguments import get_args
 from utilities.folder_management import handle_folder_creation
 
 
-def get_sin_task_sequence(alpha, n_restarts, num_test_processes, std):
+def get_sin_task_sequence(n_restarts, num_test_processes, std):
     kernel = C(1.0, (1e-8, 1e8)) * RBF(1, (1e-8, 1e8))
 
     gp_list = []
     for i in range(num_test_processes):
         gp_list.append([GaussianProcessRegressor(kernel=kernel,
-                                                 alpha=alpha ** 2,
                                                  normalize_y=False,
                                                  n_restarts_optimizer=n_restarts)
                         for _ in range(num_test_processes)])
@@ -42,9 +41,9 @@ def get_sin_task_sequence(alpha, n_restarts, num_test_processes, std):
     return gp_list, prior_seq, init_prior_test
 
 
-def get_sequences(alpha, n_restarts, num_test_processes, std):
+def get_sequences(n_restarts, num_test_processes, std):
     # Retrieve task
-    gp_list_sin, prior_seq_sin, init_prior_sin = get_sin_task_sequence(alpha, n_restarts, num_test_processes, std)
+    gp_list_sin, prior_seq_sin, init_prior_sin = get_sin_task_sequence(n_restarts, num_test_processes, std)
 
     # Fill lists
     prior_sequences = [prior_seq_sin]
@@ -88,8 +87,7 @@ def main():
         folder = folder + args.folder + "/"
     fd, folder_path_with_date = handle_folder_creation(result_path=folder)
 
-    prior_sequences, gp_list_sequences, init_prior = get_sequences(alpha=args.alpha_gp,
-                                                                   n_restarts=args.n_restarts_gp,
+    prior_sequences, gp_list_sequences, init_prior = get_sequences(n_restarts=args.n_restarts_gp,
                                                                    num_test_processes=args.num_test_processes,
                                                                    std=noise_seq_var ** (1 / 2))
 
@@ -117,7 +115,8 @@ def main():
                     action_dim=1,
                     use_gae=args.use_gae,
                     gae_lambda=args.gae_lambda,
-                    use_proper_time_limits=args.use_proper_time_limits)
+                    use_proper_time_limits=args.use_proper_time_limits,
+                    use_xavier=args.use_xavier)
 
         eval_list, test_list = agent.train(n_iter=args.training_iter,
                                            env_name=env_name,
@@ -181,7 +180,8 @@ def main():
                                     decay_kld_rate=args.decay_kld_rate,
                                     env_dim=1,
                                     action_dim=1,
-                                    vae_max_steps=args.vae_max_steps)
+                                    vae_max_steps=args.vae_max_steps,
+                                    use_xavier=args.use_xavier)
 
         vi_loss, eval_list, test_list, final_test = agent.train(n_train_iter=args.training_iter,
                                                                 init_vae_steps=args.init_vae_steps,
@@ -258,7 +258,8 @@ def main():
                           use_decay_kld=args.use_decay_kld,
                           decay_kld_rate=args.decay_kld_rate,
                           env_dim=1,
-                          action_dim=1
+                          action_dim=1,
+                          use_xavier=args.use_xavier
                           )
 
         res_eval, res_vae, test_list, final_test = agent.train(training_iter=args.training_iter,

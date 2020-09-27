@@ -57,7 +57,8 @@ class PosteriorOptTSAgent:
                  env_dim,
                  action_dim,
                  min_sigma,
-                 vae_max_steps):
+                 vae_max_steps,
+                 use_xavier):
         # Inference inference
         self.vi = vi
         self.vi_optim = vi_optim
@@ -101,7 +102,8 @@ class PosteriorOptTSAgent:
                                    self.action_space, base=base,
                                    base_kwargs={'recurrent': recurrent_policy,
                                                 'hidden_size': hidden_size,
-                                                'use_elu': use_elu})
+                                                'use_elu': use_elu,
+                                                'use_xavier': use_xavier})
 
         self.agent = PPO(self.actor_critic,
                          clip_param,
@@ -444,6 +446,7 @@ class PosteriorOptTSAgent:
         r_all_true_sigma = []
         r_all_false_sigma = []
         r_all_real_prior = []
+        r_all_no_tracking = []
 
         prediction_mean_true = []
         posterior_history_true = []
@@ -461,7 +464,6 @@ class PosteriorOptTSAgent:
                                                                             use_true_sigma=True,
                                                                             use_real_prior=False,
                                                                             task_len=task_len)
-            print("Using GP True sigma{}".format(np.mean(r)))
             r_all_true_sigma.append(r)
             prediction_mean_true.append(prediction_mean)
             posterior_history_true.append(posterior_history)
@@ -473,7 +475,6 @@ class PosteriorOptTSAgent:
                                                                             use_true_sigma=False,
                                                                             use_real_prior=False,
                                                                             task_len=task_len)
-            print("Using GP False sigma {}".format(np.mean(r)))
             r_all_false_sigma.append(r)
             posterior_history_false.append(posterior_history)
             prediction_mean_false.append(prediction_mean)
@@ -490,19 +491,28 @@ class PosteriorOptTSAgent:
                                               true_prior_sequence=s,
                                               task_len=task_len)
             r_all_real_prior.append(r)
-            print("Using real prior {}".format(np.mean(r)))
+            r, _, _ = self.test_task_sequence(gp_list_sequences[seq_idx],
+                                              sw_size,
+                                              env_name,
+                                              seed,
+                                              log_dir,
+                                              env_kwargs_list, p,
+                                              num_eval_processes,
+                                              use_true_sigma=None,
+                                              use_real_prior=False,
+                                              task_len=task_len,
+                                              no_tracking=True)
+            r_all_no_tracking.append(r)
 
         if store_history:
-            return r_all_true_sigma, r_all_false_sigma, r_all_real_prior, posterior_history_true, prediction_mean_true, \
+            return r_all_true_sigma, r_all_false_sigma, r_all_real_prior, r_all_no_tracking, posterior_history_true, prediction_mean_true, \
                    posterior_history_false, prediction_mean_false
         else:
-            return r_all_true_sigma, r_all_false_sigma, r_all_real_prior
+            return r_all_true_sigma, r_all_false_sigma, r_all_real_prior, r_all_no_tracking
 
     def test_task_sequence(self, gp_list, sw_size, env_name, seed, log_dir, envs_kwargs_list, init_prior,
                            num_eval_processes, use_true_sigma, use_real_prior, task_len,
-                           true_prior_sequence=None):
-        print("Meta-testing...")
-
+                           true_prior_sequence=None, no_tracking=False):
         num_tasks = len(envs_kwargs_list)
 
         eval_episode_rewards = []
@@ -513,6 +523,7 @@ class PosteriorOptTSAgent:
 
         for t, kwargs in enumerate(envs_kwargs_list):
             use_prev_state = False
+            task_r = []
             for _ in range(task_len):
                 # Task creation
                 temp = [kwargs for _ in range(num_eval_processes)]
@@ -562,12 +573,15 @@ class PosteriorOptTSAgent:
                             posterior_history[t, i, :] = posterior[i].clone().detach()
                             total_epi_reward = info['episode']['r']
                             task_epi_rewards.append(total_epi_reward)
+                            task_r.append(total_epi_reward)
                     already_ended = already_ended | done
 
-                eval_episode_rewards.append(np.mean(task_epi_rewards))
-
+                # eval_episode_rewards.append(np.mean(task_epi_rewards))
+            eval_episode_rewards.append(np.mean(task_r))
             # Retrieve new prior for the identified model so far
-            if use_real_prior and t + 1 < len(true_prior_sequence):
+            if no_tracking:
+                prior = init_prior
+            elif use_real_prior and t + 1 < len(true_prior_sequence):
                 prior = [true_prior_sequence[t + 1] for _ in range(num_eval_processes)]
             elif not use_real_prior:
                 x = np.atleast_2d(np.arange(t + 1)).T
@@ -599,5 +613,4 @@ class PosteriorOptTSAgent:
                         curr_pred.append(y_pred[0][0])
                     prior.append(prior_proc)
                 prediction_mean.append(np.mean(curr_pred))
-
         return eval_episode_rewards, posterior_history, prediction_mean

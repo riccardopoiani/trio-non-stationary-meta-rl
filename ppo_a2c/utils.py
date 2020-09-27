@@ -59,6 +59,13 @@ def init(module, weight_init, bias_init, gain=1):
     return module
 
 
+def xavier_weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Linear') != -1:
+        torch.nn.init.xavier_normal_(m.weight, gain=torch.nn.init.calculate_gain('tanh'))
+        torch.nn.init.zeros_(m.bias)
+
+
 def cleanup_log_dir(log_dir):
     try:
         os.makedirs(log_dir)

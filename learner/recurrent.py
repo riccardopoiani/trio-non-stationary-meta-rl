@@ -13,7 +13,7 @@ class RL2:
     def __init__(self, hidden_size, use_elu, clip_param, ppo_epoch, num_mini_batch, value_loss_coef,
                  entropy_coef, lr, eps, max_grad_norm, action_space, obs_shape, use_obs_env,
                  num_processes, gamma, device, num_steps, action_dim, use_gae, gae_lambda,
-                 use_proper_time_limits):
+                 use_proper_time_limits, use_xavier):
         self.obs_shape = obs_shape
         self.action_space = action_space
         self.use_obs_env = use_obs_env
@@ -32,7 +32,8 @@ class RL2:
                                    self.action_space, base=base,
                                    base_kwargs={'recurrent': True,
                                                 'hidden_size': hidden_size,
-                                                'use_elu': use_elu})
+                                                'use_elu': use_elu,
+                                                'use_xavier': use_xavier})
 
         self.agent = PPO(self.actor_critic,
                          clip_param,
@@ -212,6 +213,10 @@ class RL2:
 
     def meta_test(self, prior_task_sequences, task_generator, num_test_processes, env_name, seed, log_dir,
                   task_len):
+        if task_len > 1:
+            self.use_done = True
+        else:
+            self.use_done = False
 
         result_all = []
 
@@ -221,7 +226,7 @@ class RL2:
                 start_task = True
                 prev_episodes_hidden_states = torch.zeros(
                     num_test_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
-
+                task_r = []
                 for _ in range(task_len):
                     kwargs = task_generator.sample_task_from_prior(prior)
                     temp = [kwargs for _ in range(num_test_processes)]
@@ -271,9 +276,11 @@ class RL2:
                                 total_epi_reward = info['episode']['r']
                                 eval_episode_rewards.append(total_epi_reward)
                                 prev_episodes_hidden_states[i] = eval_recurrent_hidden_states[i].clone().detach()
+                                task_r.append(total_epi_reward)
                         already_ended = already_ended | done
                     # print(np.mean(eval_episode_rewards))
-                    sequence_rewards.append(np.mean(eval_episode_rewards))
+                    # sequence_rewards.append(np.mean(eval_episode_rewards))
+                sequence_rewards.append(np.mean(task_r))
             print("Sequence results {}".format(sequence_rewards))
             result_all.append(sequence_rewards)
 

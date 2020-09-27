@@ -57,7 +57,8 @@ class OursAgent:
                  decay_kld_rate,
                  env_dim,
                  action_dim,
-                 min_sigma):
+                 min_sigma,
+                 use_xavier):
         # General parameters
         self.device = device
         self.gamma = gamma
@@ -100,7 +101,8 @@ class OursAgent:
                                    self.action_space, base=base,
                                    base_kwargs={'recurrent': recurrent_policy,
                                                 'hidden_size': hidden_size,
-                                                'use_elu': use_elu})
+                                                'use_elu': use_elu,
+                                                'use_xavier': use_xavier})
 
         self.agent = PPO(self.actor_critic,
                          clip_param,
@@ -501,8 +503,8 @@ class OursAgent:
                 obs = augment_obs_posterior(obs, self.latent_dim, posterior,
                                             use_env_obs, rescale_obs=self.rescale_obs,
                                             max_old=self.max_old, min_old=self.min_old, is_prior=False)
-                # if num_iteration == 1 and not already_ended[1]:
-                #    print("New T {} A {} O {} R{} ".format(new_tasks[1], action[1], obs[1], reward[1]))
+                if num_iteration == 1 and not already_ended[1]:
+                    print("New T {} A {} O {} R{} ".format(new_tasks[1], action[1], obs[1], reward[1]))
 
                 use_prev_state = True
                 eval_masks = torch.tensor(
@@ -597,6 +599,7 @@ class OursAgent:
         r_all_true_sigma = []
         r_all_false_sigma = []
         r_all_real_prior = []
+        r_all_no_tracking = []
 
         prediction_mean_true = []
         posterior_history_true = []
@@ -604,7 +607,6 @@ class OursAgent:
         posterior_history_false = []
 
         for seq_idx, s in enumerate(prior_sequences):
-            print("SEQ IDX {}".format(seq_idx))
             env_kwargs_list = [task_generator.sample_task_from_prior(s[i]) for i in range(len(s))]
 
             r, posterior_history, prediction_mean = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size,
@@ -616,7 +618,6 @@ class OursAgent:
                                                                             use_true_sigma=True,
                                                                             use_real_prior=False,
                                                                             verbose=True)
-            print("Using GP True sigma {}".format(np.mean(r)))
             r_all_true_sigma.append(r)
             prediction_mean_true.append(prediction_mean)
             posterior_history_true.append(posterior_history)
@@ -629,7 +630,6 @@ class OursAgent:
                                                                             task_len=task_len,
                                                                             use_true_sigma=False,
                                                                             use_real_prior=False)
-            print("Using GP False sigma {}".format(np.mean(r)))
             r_all_false_sigma.append(r)
             posterior_history_false.append(posterior_history)
             prediction_mean_false.append(prediction_mean)
@@ -640,17 +640,25 @@ class OursAgent:
                                               task_len=task_len, use_true_sigma=None,
                                               use_real_prior=True, true_prior_sequence=s)
             r_all_real_prior.append(r)
-            print("Using real prior {}".format(np.mean(r)))
+
+            r, _, _ = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size, env_name, seed, log_dir,
+                                              env_kwargs_list, init_prior_sequences[seq_idx],
+                                              use_env_obs, num_eval_processes,
+                                              task_len=task_len,
+                                              use_true_sigma=None,
+                                              use_real_prior=False,
+                                              no_tracking=True)
+            r_all_no_tracking.append(r)
 
         if store_history:
-            return r_all_true_sigma, r_all_false_sigma, r_all_real_prior, posterior_history_true, prediction_mean_true, \
+            return r_all_true_sigma, r_all_false_sigma, r_all_real_prior, r_all_no_tracking, posterior_history_true, prediction_mean_true, \
                    posterior_history_false, prediction_mean_false
         else:
-            return r_all_true_sigma, r_all_false_sigma, r_all_real_prior
+            return r_all_true_sigma, r_all_false_sigma, r_all_real_prior, r_all_no_tracking
 
     def test_task_sequence(self, gp_list, sw_size, env_name, seed, log_dir, envs_kwargs_list, init_prior, use_env_obs,
                            num_eval_processes, use_true_sigma, use_real_prior, true_prior_sequence=None, verbose=False,
-                           task_len=1):
+                           task_len=1, no_tracking=False):
         num_tasks = len(envs_kwargs_list)
 
         eval_episode_rewards = []
@@ -663,7 +671,7 @@ class OursAgent:
 
         for t, kwargs in enumerate(envs_kwargs_list):
             use_prev_state = False
-
+            task_r = []
             for _ in range(task_len):
                 # Task creation
                 temp = [kwargs for _ in range(num_eval_processes)]
@@ -716,12 +724,15 @@ class OursAgent:
                             posterior_history[t, i, :] = posterior[i].clone().detach()
                             total_epi_reward = info['episode']['r']
                             task_epi_rewards.append(total_epi_reward)
+                            task_r.append(total_epi_reward)
                     already_ended = already_ended | done
 
-                eval_episode_rewards.append(np.mean(task_epi_rewards))
-
+                # eval_episode_rewards.append(np.mean(task_epi_rewards))
+            eval_episode_rewards.append(np.mean(task_r))
             # Retrieve new prior for the identified model so far
-            if use_real_prior and t + 1 < len(true_prior_sequence):
+            if no_tracking:
+                prior = init_prior
+            elif use_real_prior and t + 1 < len(true_prior_sequence):
                 prior = [true_prior_sequence[t + 1] for _ in range(num_eval_processes)]
             elif not use_real_prior:
                 x = np.atleast_2d(np.arange(t + 1)).T
@@ -754,11 +765,5 @@ class OursAgent:
                         curr_pred.append(y_pred[0][0])
                     prior.append(prior_proc)
                 prediction_mean.append(np.mean(curr_pred))
-
-        if verbose:
-            print("Eval episodes {}".format(eval_episode_rewards))
-            print("Predicted sigmas {}".format(predicted_sigmas))
-            print("Predicted mean {}".format(prediction_mean))
-            print("\n")
 
         return eval_episode_rewards, posterior_history, prediction_mean

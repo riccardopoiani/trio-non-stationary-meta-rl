@@ -1,3 +1,4 @@
+import os
 import pickle
 
 import numpy as np
@@ -15,8 +16,10 @@ from task.navigation_task_generator import NavigationTaskGenerator
 from utilities.arguments import get_args
 from utilities.folder_management import handle_folder_creation
 
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
-def get_alternating_sequences(alpha, n_restarts, num_test_processes, var_seq, num_signals):
+
+def get_alternating_sequences(n_restarts, num_test_processes, var_seq, num_signals):
     std = var_seq ** (1 / 2)
     # Creating GPs
     kernel = C(1.0, (1e-8, 1e8)) * RBF(1, (1e-8, 1e8))
@@ -26,7 +29,6 @@ def get_alternating_sequences(alpha, n_restarts, num_test_processes, var_seq, nu
         curr_dim_list = []
         for _ in range(num_test_processes):
             curr_dim_list.append(GaussianProcessRegressor(kernel=kernel,
-                                                          alpha=alpha ** 2,
                                                           normalize_y=False,
                                                           n_restarts_optimizer=n_restarts)
                                  )
@@ -68,14 +70,13 @@ def get_alternating_sequences(alpha, n_restarts, num_test_processes, var_seq, nu
     return gp_list, prior_seq, init_prior_test
 
 
-def get_sequences(alpha, n_restarts, num_test_processes, var_seq, num_signals):
-    gp_list, prior_seq, init_prior_test = get_alternating_sequences(alpha=alpha,
-                                                                    n_restarts=n_restarts,
+def get_sequences(n_restarts, num_test_processes, var_seq, num_signals):
+    gp_list, prior_seq, init_prior_test = get_alternating_sequences(n_restarts=n_restarts,
                                                                     num_test_processes=num_test_processes,
                                                                     var_seq=var_seq,
                                                                     num_signals=num_signals)
-    return [prior_seq], [gp_list], [init_prior_test]
-    # return [], [], []
+    # return [prior_seq], [gp_list], [init_prior_test]
+    return [], [], []
 
 
 def main():
@@ -134,8 +135,7 @@ def main():
         folder = folder + args.folder + "/"
     fd, folder_path_with_date = handle_folder_creation(result_path=folder)
 
-    prior_sequences, gp_list_sequences, init_prior = get_sequences(alpha=args.alpha_gp,
-                                                                   n_restarts=args.n_restarts_gp,
+    prior_sequences, gp_list_sequences, init_prior = get_sequences(n_restarts=args.n_restarts_gp,
                                                                    num_test_processes=args.num_test_processes,
                                                                    var_seq=var_seq,
                                                                    num_signals=signals_dim)
@@ -164,7 +164,8 @@ def main():
                     action_dim=2,
                     use_gae=args.use_gae,
                     gae_lambda=args.gae_lambda,
-                    use_proper_time_limits=args.use_proper_time_limits)
+                    use_proper_time_limits=args.use_proper_time_limits,
+                    use_xavier=args.use_xavier)
 
         eval_list, test_list = agent.train(n_iter=args.training_iter,
                                            env_name=env_name,
@@ -229,7 +230,8 @@ def main():
                                     env_dim=2 + signals_dim,
                                     action_dim=2,
                                     min_sigma=prior_std_min,
-                                    vae_max_steps=args.vae_max_steps)
+                                    vae_max_steps=args.vae_max_steps,
+                                    use_xavier=args.use_xavier)
 
         vi_loss, eval_list, test_list, final_test = agent.train(n_train_iter=args.training_iter,
                                                                 init_vae_steps=args.init_vae_steps,
@@ -302,7 +304,8 @@ def main():
                           decay_kld_rate=args.decay_kld_rate,
                           env_dim=2 + signals_dim,
                           action_dim=2,
-                          min_sigma=prior_std_min
+                          min_sigma=prior_std_min,
+                          use_xavier=args.use_xavier
                           )
 
         res_eval, res_vae, test_list, final_test = agent.train(training_iter=args.training_iter,

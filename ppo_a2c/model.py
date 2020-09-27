@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from ppo_a2c.distributions import Categorical, DiagGaussian, Bernoulli
-from ppo_a2c.utils import init
+from ppo_a2c.utils import init, xavier_weights_init
 
 
 class Flatten(torch.nn.Module):
@@ -197,7 +197,7 @@ class CNNBase(NNBase):
 
 
 class MLPBase(NNBase):
-    def __init__(self, num_inputs, recurrent=False, hidden_size=64, use_elu=True):
+    def __init__(self, num_inputs, recurrent=False, hidden_size=64, use_elu=True, use_xavier=False):
         super(MLPBase, self).__init__(recurrent, num_inputs, hidden_size)
 
         if recurrent:
@@ -224,6 +224,10 @@ class MLPBase(NNBase):
                 init_(torch.nn.Linear(hidden_size, hidden_size)), torch.nn.Tanh())
 
         self.critic_linear = init_(torch.nn.Linear(hidden_size, 1))
+
+        if use_xavier:
+            self.actor.apply(xavier_weights_init)
+            self.critic.apply(xavier_weights_init)
 
         self.train()
 

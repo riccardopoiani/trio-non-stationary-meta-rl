@@ -19,7 +19,22 @@ class AntTaskGenerator(TaskGenerator):
         raise NotImplemented
 
     def sample_task_from_prior(self, prior):
-        pass
+        ok = True
+
+        while ok:
+            mu = prior[0].clone().detach()
+            var = prior[1].clone().detach()
+
+            task_param = torch.normal(mu, var.sqrt())
+
+            if torch.any(task_param > self.latent_max_mean) | torch.any(task_param< self.latent_min_mean):
+                ok = True
+            else:
+                ok = False
+
+        envs_kwargs = {'frictions': task_param.numpy()}
+
+        return envs_kwargs
 
     def sample_pair_tasks(self, num_processes):
         mu = (self.latent_min_mean - self.latent_max_mean) * torch.rand(num_processes, self.latent_dim) + self.latent_max_mean
