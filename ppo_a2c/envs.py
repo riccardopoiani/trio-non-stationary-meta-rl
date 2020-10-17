@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from baselines import bench
 from baselines.common.atari_wrappers import make_atari, wrap_deepmind
+from baselines.common.running_mean_std import RunningMeanStd
 from baselines.common.vec_env import VecEnvWrapper, ShmemVecEnv
 from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
 from baselines.common.vec_env.vec_normalize import \
@@ -28,6 +29,19 @@ try:
     import pybullet_envs
 except ImportError:
     pass
+
+
+class LatentSpaceSmoother:
+    def __init__(self, shape, clipob=10., epsilon=1e-8):
+        self.clipob = clipob
+        self.epsilon = epsilon
+        self.ob_rms = RunningMeanStd(shape=shape)
+
+    def step(self, obs):
+        obs = obs.numpy()
+        self.ob_rms.update(obs)
+        obs = np.clip((obs - self.ob_rms.mean) / np.sqrt(self.ob_rms.var + self.epsilon), -self.clipob, self.clipob)
+        return torch.tensor(obs, dtype=torch.float32)
 
 
 def make_env_multi_task(env_id, seed, rank, log_dir, allow_early_resets, kwargs):
@@ -123,17 +137,20 @@ def make_vec_envs_multi_task(env_name,
                              device,
                              allow_early_resets,
                              env_kwargs_list,
-                             num_frame_stack=None):
+                             num_frame_stack=None,
+                             use_vec_normalize=True):
     envs = [
         make_env_multi_task(env_name, seed, i, log_dir, allow_early_resets, env_kwargs_list[i])
         for i in range(num_processes)
     ]
 
-    if len(envs) > 1:
-        envs = DummyVecEnv(envs)
-        # envs = MyShmemVecEnv(envs)
-    else:
-        envs = DummyVecEnv(envs)
+    envs = DummyVecEnv(envs)
+
+    if use_vec_normalize:
+        if gamma is None:
+            envs = VecNormalize(envs, ret=False)
+        else:
+            envs = VecNormalize(envs, gamma=gamma)
 
     envs = VecPyTorch(envs, device)
 
@@ -153,16 +170,11 @@ def get_vec_envs_multi_task(env_name,
                             device,
                             allow_early_resets,
                             env_kwargs_list,
-                            env,
+                            use_vec_normalize,
                             num_frame_stack=None,
                             ):
-    if env is None:
-        return make_vec_envs_multi_task(env_name, seed, num_processes, gamma, log_dir, device, allow_early_resets,
-                                        env_kwargs_list, num_frame_stack)
-    else:
-        for i in range(num_processes):
-            env.venv.envs[i].set_latent(**env_kwargs_list[i])
-        return env
+    return make_vec_envs_multi_task(env_name, seed, num_processes, gamma, log_dir, device, allow_early_resets,
+                                    env_kwargs_list, num_frame_stack, use_vec_normalize)
 
 
 def make_vec_envs(env_name,

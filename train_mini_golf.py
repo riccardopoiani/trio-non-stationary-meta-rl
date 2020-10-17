@@ -116,7 +116,8 @@ def main():
                     use_gae=args.use_gae,
                     gae_lambda=args.gae_lambda,
                     use_proper_time_limits=args.use_proper_time_limits,
-                    use_xavier=args.use_xavier)
+                    use_xavier=args.use_xavier,
+                    use_obs_rms=args.use_rms_obs)
 
         eval_list, test_list = agent.train(n_iter=args.training_iter,
                                            env_name=env_name,
@@ -137,8 +138,6 @@ def main():
 
         torch.save(agent.actor_critic, "{}rl2_actor_critic".format(folder_path_with_date))
     elif args.algo == 'ts_opt':
-        max_old = None
-        min_old = None
         obs_shape = (2,)
 
         vi = InferenceNetwork(n_in=5, z_dim=latent_dim)
@@ -152,8 +151,6 @@ def main():
                                     gamma=args.gamma,
                                     latent_dim=latent_dim,
                                     use_env_obs=True,
-                                    min_action=None,
-                                    max_action=None,
                                     max_sigma=[prior_var_max ** (1 / 2)],
                                     min_sigma=[prior_var_min ** (1 / 2)],
                                     action_space=action_space,
@@ -173,15 +170,14 @@ def main():
                                     recurrent_policy=args.recurrent,
                                     hidden_size=args.hidden_size,
                                     use_elu=args.use_elu,
-                                    rescale_obs=False,
-                                    max_old=max_old,
-                                    min_old=min_old,
                                     use_decay_kld=args.use_decay_kld,
                                     decay_kld_rate=args.decay_kld_rate,
                                     env_dim=1,
                                     action_dim=1,
                                     vae_max_steps=args.vae_max_steps,
-                                    use_xavier=args.use_xavier)
+                                    use_xavier=args.use_xavier,
+                                    use_rms_latent=args.use_rms_latent,
+                                    use_rms_obs=args.use_rms_obs)
 
         vi_loss, eval_list, test_list, final_test = agent.train(n_train_iter=args.training_iter,
                                                                 init_vae_steps=args.init_vae_steps,
@@ -212,8 +208,6 @@ def main():
         torch.save(agent.actor_critic, "{}agent_ac".format(folder_path_with_date))
 
     elif args.algo == "ours":
-        max_old = None
-        min_old = None
         vae_min_seq = 1
         vae_max_seq = args.vae_max_steps
 
@@ -246,20 +240,17 @@ def main():
                           use_elu=args.use_elu,
                           variational_model=vi,
                           vae_optim=vi_optim,
-                          rescale_obs=False,
-                          max_old=max_old,
-                          min_old=min_old,
                           vae_min_seq=vae_min_seq,
                           vae_max_seq=vae_max_seq,
-                          max_action=None,
-                          min_action=None,
                           max_sigma=[prior_var_max ** (1 / 2)],
                           min_sigma=[prior_var_min ** (1 / 2)],
                           use_decay_kld=args.use_decay_kld,
                           decay_kld_rate=args.decay_kld_rate,
                           env_dim=1,
                           action_dim=1,
-                          use_xavier=args.use_xavier
+                          use_xavier=args.use_xavier,
+                          use_rms_latent=args.use_rms_latent,
+                          use_rms_obs=args.use_rms_obs
                           )
 
         res_eval, res_vae, test_list, final_test = agent.train(training_iter=args.training_iter,

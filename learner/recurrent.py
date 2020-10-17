@@ -6,14 +6,14 @@ from ppo_a2c.algo.ppo import PPO
 from ppo_a2c.envs import get_vec_envs_multi_task
 from ppo_a2c.model import MLPBase, Policy
 from ppo_a2c.storage import RolloutStorage
-
+import time
 
 class RL2:
 
     def __init__(self, hidden_size, use_elu, clip_param, ppo_epoch, num_mini_batch, value_loss_coef,
                  entropy_coef, lr, eps, max_grad_norm, action_space, obs_shape, use_obs_env,
                  num_processes, gamma, device, num_steps, action_dim, use_gae, gae_lambda,
-                 use_proper_time_limits, use_xavier):
+                 use_proper_time_limits, use_xavier, use_obs_rms):
         self.obs_shape = obs_shape
         self.action_space = action_space
         self.use_obs_env = use_obs_env
@@ -22,6 +22,7 @@ class RL2:
         self.device = device
         self.num_steps = num_steps
         self.action_dim = action_dim
+        self.use_obs_rms = use_obs_rms
 
         self.use_gae = use_gae
         self.gae_lambda = gae_lambda
@@ -103,8 +104,16 @@ class RL2:
 
     def train_iter(self, env_name, seed, task_generator, log_dir, task_len):
         envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-        self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
-                                            True, envs_kwargs, self.envs, num_frame_stack=None)
+        self.envs = get_vec_envs_multi_task(env_name=env_name,
+                                            seed=seed,
+                                            num_processes=self.num_processes,
+                                            gamma=self.gamma,
+                                            log_dir=log_dir,
+                                            device=self.device,
+                                            allow_early_resets=True,
+                                            env_kwargs_list=envs_kwargs,
+                                            use_vec_normalize=self.use_obs_rms,
+                                            num_frame_stack=None)
 
         obs = self.envs.reset()
         obs = self.build_obs(obs=obs, reward=None, action=None, is_init=True, use_obs_env=self.use_obs_env,
@@ -167,8 +176,16 @@ class RL2:
 
         for _ in range(n_iter):
             envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            self.envs = get_vec_envs_multi_task(env_name, seed, self.num_processes, self.gamma, log_dir, self.device,
-                                                True, envs_kwargs, self.envs, num_frame_stack=None)
+            self.envs = get_vec_envs_multi_task(env_name=env_name,
+                                                seed=seed,
+                                                num_processes=self.num_processes,
+                                                gamma=self.gamma,
+                                                log_dir=log_dir,
+                                                device=self.device,
+                                                allow_early_resets=True,
+                                                env_kwargs_list=envs_kwargs,
+                                                use_vec_normalize=self.use_obs_rms,
+                                                num_frame_stack=None)
 
             eval_episode_rewards = []
 
@@ -229,11 +246,16 @@ class RL2:
                 task_r = []
                 for _ in range(task_len):
                     kwargs = task_generator.sample_task_from_prior(prior)
-                    temp = [kwargs for _ in range(num_test_processes)]
-                    self.eval_envs = get_vec_envs_multi_task(env_name, seed, num_test_processes, self.gamma, log_dir,
-                                                             self.device, True, temp, self.eval_envs,
+                    self.eval_envs = get_vec_envs_multi_task(env_name=env_name,
+                                                             seed=seed,
+                                                             num_processes=num_test_processes,
+                                                             gamma=self.gamma,
+                                                             log_dir=log_dir,
+                                                             device=self.device,
+                                                             allow_early_resets=True,
+                                                             env_kwargs_list=[kwargs for _ in range(num_test_processes)],
+                                                             use_vec_normalize=self.use_obs_rms,
                                                              num_frame_stack=None)
-
                     eval_episode_rewards = []
 
                     obs = self.eval_envs.reset()
@@ -261,6 +283,7 @@ class RL2:
                                 deterministic=False)
 
                         # Observe reward and next obs
+                        time.sleep(.002)
                         obs, reward, done, infos = self.eval_envs.step(action)
                         obs = self.build_obs(obs=obs, reward=reward, action=action, is_init=False,
                                              use_obs_env=self.use_obs_env, num_processes=num_test_processes,

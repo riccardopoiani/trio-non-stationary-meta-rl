@@ -18,13 +18,19 @@ from utilities.test_arguments import get_test_args
 
 folder = "result/metatest/scalegauss/"
 env_name = "custom_env:scalegauss-v0"
-folder_list = ["result/scalegauss_final/ours/",
-               "result/scalegauss_final/tsopt/",
-               "result/scalegauss_final/rl2/"]
-algo_list = ['ours', 'ts_opt', 'rl2']
-label_list = ['ours', 'ts_opt', 'rl2']
-has_track_list = [True, True, False]
-store_history_list = [True, True, False]
+# folder_list = ["result/scalegauss_final/ours/",
+#               "result/scalegauss_final/tsopt/",
+#               "result/scalegauss_final/rl2/"]
+# algo_list = ['ours', 'ts_opt', 'rl2']
+# label_list = ['ours', 'ts_opt', 'rl2']
+# has_track_list = [True, True, False]
+# store_history_list = [True, True, False]
+folder_list = ["result/scalegauss_final/ours/"]
+algo_list = ['ours']
+label_list = ['ours']
+has_track_list = [True]
+store_history_list = [True]
+
 prior_var_min = 0.001
 prior_var_max = 0.5
 noise_seq_var = 0.001
@@ -35,9 +41,9 @@ action_space = spaces.Box(low=min_action,
                           high=max_action,
                           shape=(1,))
 
-num_seq = 4
-seq_len_list = [20, 20, 30, 40]
-sequence_name_list = ['const', 'linear', "doublestep", 'mix']
+num_seq = 1
+seq_len_list = [30]
+sequence_name_list = ["doublestep"]
 
 
 def f_double_step(x, y_min=-0.5, y_max=0.5, first_peak=10, second_peak=20):
@@ -64,7 +70,7 @@ def f_mixture_changes(x):
 
 
 def get_const_task_sequence(n_restarts, num_test_processes, std):
-    kernel = C(1) * RBF(1) + WhiteKernel(0.1, noise_level_bounds="fixed") + DotProduct(1)
+    kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
 
     gp_list = []
     for i in range(num_test_processes):
@@ -84,7 +90,7 @@ def get_const_task_sequence(n_restarts, num_test_processes, std):
 
 
 def get_linear_task_sequence(n_restarts, num_test_processes, std):
-    kernel = C(1) * RBF(1) + WhiteKernel(0.1, noise_level_bounds="fixed") + DotProduct(1)
+    kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
 
     gp_list = []
     for i in range(num_test_processes):
@@ -96,7 +102,7 @@ def get_linear_task_sequence(n_restarts, num_test_processes, std):
                        for _ in range(num_test_processes)]
 
     prior_seq = []
-    for idx in range(0, 20):
+    for idx in range(0, 15):
         friction = f_linear(idx)
         prior_seq.append(torch.tensor([[friction], [std ** 2]], dtype=torch.float32))
 
@@ -117,14 +123,14 @@ def get_double_step_sequences(n_restarts, num_test_processes, std):
 
     prior_seq = []
     for idx in range(0, 30):
-        friction = f_linear(idx)
+        friction = f_double_step(idx)
         prior_seq.append(torch.tensor([[friction], [std ** 2]], dtype=torch.float32))
 
     return gp_list, prior_seq, init_prior_test
 
 
 def get_strange_sequences(n_restarts, num_test_processes, std):
-    kernel = C(1) * RBF(1) + WhiteKernel(0.1, noise_level_bounds="fixed") + DotProduct(1)
+    kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
 
     gp_list = []
     for i in range(num_test_processes):
@@ -151,15 +157,19 @@ def get_sequences(n_restarts, num_test_processes, std):
     gp_list_mix, prior_seq_mix, init_prior_mix = get_strange_sequences(n_restarts, num_test_processes, std)
 
     # Fill lists
-    p = [prior_seq_const, prior_seq_lin, prior_seq_step, prior_seq_mix]
-    gp = [gp_list_const, gp_list_lin, gp_list_step, gp_list_mix]
-    ip = [init_prior_const, init_prior_lin, init_prior_step, init_prior_mix]
+    # p = [prior_seq_lin, prior_seq_const, prior_seq_step, prior_seq_mix]
+    # gp = [gp_list_lin, gp_list_const, gp_list_step, gp_list_mix]
+    # ip = [init_prior_lin, init_prior_const, init_prior_step, init_prior_mix]
+    p = [prior_seq_step]
+    gp = [gp_list_step]
+    ip = [init_prior_step]
+
     return p, gp, ip
 
 
 def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_sequences,
                   num_eval_processes, task_generator, store_history, seed, log_dir,
-                  device, task_len, model, vi):
+                  device, task_len, model, vi, t_id):
     res = None
     if algo == "rl2":
         agent = RL2(hidden_size=8,
@@ -178,7 +188,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                     num_processes=32,
                     gamma=0.99,
                     device="cpu",
-                    num_steps=20,
+                    num_steps=15,
                     action_dim=1,
                     use_gae=False,
                     gae_lambda=0.95,
@@ -191,7 +201,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
         agent = OursAgent(action_space=action_space,
                           device=device,
                           gamma=0.99,
-                          num_steps=20,
+                          num_steps=15,
                           num_processes=32,
                           clip_param=0.2,
                           ppo_epoch=4,
@@ -223,7 +233,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                           min_sigma=[prior_var_min ** (1 / 2)],
                           use_decay_kld=None,
                           decay_kld_rate=None,
-                          env_dim=1,
+                          env_dim=0,
                           action_dim=1,
                           use_xavier=False
                           )
@@ -240,11 +250,12 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                                         num_eval_processes=num_eval_processes,
                                         task_generator=task_generator,
                                         store_history=store_history,
-                                        task_len=task_len)
+                                        task_len=task_len,
+                                        t_id=t_id)
     elif algo == "ts_opt":
         agent = PosteriorOptTSAgent(vi=None,
                                     vi_optim=None,
-                                    num_steps=20,
+                                    num_steps=15,
                                     num_processes=32,
                                     device=device,
                                     gamma=0.99,
@@ -276,7 +287,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                                     min_old=None,
                                     use_decay_kld=None,
                                     decay_kld_rate=None,
-                                    env_dim=1,
+                                    env_dim=0,
                                     action_dim=1,
                                     use_xavier=False,
                                     vae_max_steps=None)
@@ -301,7 +312,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
     return res
 
 
-def main(args, model, vi, algo, store, seed):
+def main(args, model, vi, algo, store, seed, t_id):
     prior_sequences, gp_list_sequences, init_prior = get_sequences(n_restarts=args.n_restarts_gp,
                                                                    num_test_processes=args.num_test_processes,
                                                                    std=noise_seq_var ** (1 / 2))
@@ -312,7 +323,7 @@ def main(args, model, vi, algo, store, seed):
                          init_prior_sequences=init_prior, gp_list_sequences=gp_list_sequences,
                          num_eval_processes=args.num_test_processes, task_generator=task_generator,
                          store_history=store, seed=seed, log_dir=args.log_dir,
-                         device=device, task_len=args.task_len, model=model, vi=vi)
+                         device=device, task_len=args.task_len, model=model, vi=vi, t_id=t_id)
 
 
 def run(id, seed, args, model, vi, algo, store):
@@ -321,7 +332,7 @@ def run(id, seed, args, model, vi, algo, store):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     print("Starting run {} algo {} seed {}".format(id, algo, seed))
-    r = main(args=args, model=model, vi=vi, algo=algo, store=store, seed=seed)
+    r = main(args=args, model=model, vi=vi, algo=algo, store=store, seed=seed, t_id=id)
     print("Done run {} algo {} seed {}".format(id, algo, seed))
     return r
 

@@ -11,7 +11,6 @@ from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
 from task.ant_task_generator import AntTaskGenerator
-from task.mini_golf_task_generator import MiniGolfTaskGenerator
 from utilities.folder_management import handle_folder_creation
 from utilities.plots import view_results, create_csv_rewards, create_csv_tracking
 from utilities.test_arguments import get_test_args
@@ -21,29 +20,40 @@ import warnings
 warnings.filterwarnings(action='ignore')
 
 folder = "result/metatest/ant/"
-env_name = "gym_sin:antfriction-v0"
-folder_list = ["result/antfinal/ours/",
-               "result/antfinal/tsopt/",
-               "result/antfinal/rl2/"]
-algo_list = ['ours', 'ts_opt', 'rl2']
-label_list = ['ours', 'ts_opt', 'rl2']
-has_track_list = [True, True, False]
-store_history_list = [True, True, False]
+env_name = "gym_sin:antfrictionfull-v0"
+folder_list = ["result/tempant/ours/", "result/tempant/rl2/", "result/tempant/tsopt/"]
+algo_list = ['ours', 'rl2', 'ts_opt']
+label_list = ['ours', 'rl2', 'ts_opt']
+has_track_list = [True, False, True]
+store_history_list = [True, False, True]
+
 # Task family parameters
 friction_var_min = 0.00001
-friction_var_max = 0.04
-noise_seq_var = 0.001
+friction_var_max = 0.4
+noise_seq_var = 0.00001
 latent_dim = 8
 high_act = np.ones(8, dtype=np.float32)
 low_act = -np.ones(8, dtype=np.float32)
 action_space = spaces.Box(low=low_act, high=high_act)
 
-num_seq = 2
-seq_len_list = [35, 30]
-sequence_name_list = ['deteriorate', 'broken']
+num_seq = 4
+seq_len_list = [26, 25, 25, 25]
+sequence_name_list = ['deteriorate0', 'deteriorate1', 'deteriorate2', 'deteriorate3']
 
 
-def get_decay_sequences(n_restarts, num_test_processes, var_seq):
+def check_leg_cond(i, leg_idx):
+    if leg_idx == 0:
+        return True if i == 0 or i == 1 else False
+    elif leg_idx == 1:
+        return True if i == 2 or i == 3 else False
+    elif leg_idx == 2:
+        return True if i == 4 or i == 5 else False
+    elif leg_idx == 3:
+        return True if i == 6 or i == 7 else False
+    raise NotImplemented("Leg idx should be in [0, 3] but {} was found".format(leg_idx))
+
+
+def get_decay_sequences(n_restarts, num_test_processes, var_seq, leg_idx):
     std = var_seq ** (1 / 2)
     kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
     gp_list = []
@@ -67,7 +77,7 @@ def get_decay_sequences(n_restarts, num_test_processes, var_seq):
 
     # Create prior sequence
     prior_seq = []
-    for idx in range(35):
+    for idx in range(26 if leg_idx == 0 else 25):
         p_mean = []
         p_var = []
         for i in range(latent_dim):
@@ -75,63 +85,12 @@ def get_decay_sequences(n_restarts, num_test_processes, var_seq):
                 p_mean.append(1)
                 p_var.append(std ** 2)
             elif 20 >= idx >= 10:
-                if i < 2:
+                if check_leg_cond(i=i, leg_idx=leg_idx):
                     p_mean.append(1 - (idx - 10) / 5)
                     p_var.append(std ** 2)
                 else:
                     p_mean.append(1)
                     p_var.append(std ** 2)
-        prior_seq.append(torch.tensor([p_mean, p_var], dtype=torch.float32))
-
-    return gp_list, prior_seq, init_prior_test
-
-
-def get_broken_sequences(n_restarts, num_test_processes, var_seq):
-    std = var_seq ** (1 / 2)
-    kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
-    gp_list = []
-
-    for _ in range(latent_dim):
-        curr_dim_list = []
-        for _ in range(num_test_processes):
-            curr_dim_list.append(GaussianProcessRegressor(kernel=kernel,
-                                                          normalize_y=False,
-                                                          n_restarts_optimizer=n_restarts))
-        gp_list.append(curr_dim_list)
-
-    # Creating prior distribution
-    p_mean = []
-    p_var = []
-    for _ in range(latent_dim):
-        p_mean.append(1)
-        p_var.append(std ** 2)
-    init_prior_test = [torch.tensor([p_mean, p_var], dtype=torch.float32)
-                       for _ in range(num_test_processes)]
-
-    # Create prior sequence
-    prior_seq = []
-    for idx in range(30):
-        p_mean = []
-        p_var = []
-        for i in range(latent_dim):
-            if idx < 10:
-                p_mean.append(1)
-                p_var.append(std ** 2)
-            elif 20 >= idx >= 10:
-                if i < 2:
-                    p_mean.append(1 - (idx - 10) / 5)
-                    p_var.append(std ** 2)
-                else:
-                    p_mean.append(1)
-                    p_var.append(std ** 2)
-            elif idx > 20:
-                if i < 2:
-                    p_mean.append(-3.)
-                    p_var.append(std ** 2)
-                else:
-                    p_mean.append(1)
-                    p_var.append(std ** 2)
-
         prior_seq.append(torch.tensor([p_mean, p_var], dtype=torch.float32))
 
     return gp_list, prior_seq, init_prior_test
@@ -139,13 +98,19 @@ def get_broken_sequences(n_restarts, num_test_processes, var_seq):
 
 def get_sequences(n_restarts, num_test_processes, std):
     # Retrieve task
-    gp_list_decay, prior_seq_decay , init_prior_decay = get_decay_sequences(n_restarts, num_test_processes, std)
-    gp_list_broken, prior_seq_broken, init_prior_broken = get_broken_sequences(n_restarts, num_test_processes, std)
+    gp_list_decay_1, prior_seq_decay_1, init_prior_decay_1 = get_decay_sequences(n_restarts, num_test_processes, std,
+                                                                                 leg_idx=0)
+    gp_list_decay_2, prior_seq_decay_2, init_prior_decay_2 = get_decay_sequences(n_restarts, num_test_processes, std,
+                                                                                 leg_idx=1)
+    gp_list_decay_3, prior_seq_decay_3, init_prior_decay_3 = get_decay_sequences(n_restarts, num_test_processes, std,
+                                                                                 leg_idx=2)
+    gp_list_decay_4, prior_seq_decay_4, init_prior_decay_4 = get_decay_sequences(n_restarts, num_test_processes, std,
+                                                                                 leg_idx=3)
 
     # Fill lists
-    p = [prior_seq_decay, prior_seq_broken]
-    gp = [gp_list_decay, gp_list_broken]
-    ip = [init_prior_decay, init_prior_broken]
+    p = [prior_seq_decay_1, prior_seq_decay_2, prior_seq_decay_3, prior_seq_decay_4]
+    gp = [gp_list_decay_1, gp_list_decay_2, gp_list_decay_3, gp_list_decay_4]
+    ip = [init_prior_decay_1, init_prior_decay_2, init_prior_decay_3, init_prior_decay_4]
     return p, gp, ip
 
 
@@ -165,7 +130,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                     eps=1e-6,
                     max_grad_norm=0.5,
                     action_space=action_space,
-                    obs_shape=(111+8+1,),
+                    obs_shape=(111 + 8 + 1,),
                     use_obs_env=True,
                     num_processes=32,
                     gamma=0.99,
@@ -175,7 +140,8 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                     use_gae=False,
                     gae_lambda=0.95,
                     use_proper_time_limits=True,
-                    use_xavier=False)
+                    use_xavier=False,
+                    use_obs_rms=True)
         agent.actor_critic = model
         res = agent.meta_test(prior_sequences, task_generator, num_eval_processes, env_name, seed, log_dir,
                               task_len)
@@ -197,27 +163,24 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                           use_gae=None,
                           gae_lambda=0.95,
                           use_proper_time_limits=True,
-                          obs_shape=(111+16,),
+                          obs_shape=(111 + 16,),
                           latent_dim=8,
                           recurrent_policy=False,
                           hidden_size=10,
                           use_elu=False,
                           variational_model=None,
                           vae_optim=None,
-                          rescale_obs=False,
-                          max_old=None,
-                          min_old=None,
                           vae_min_seq=None,
                           vae_max_seq=None,
-                          max_action=None,
-                          min_action=None,
                           max_sigma=task_generator.latent_min_std.tolist(),
                           min_sigma=task_generator.latent_max_std.tolist(),
                           use_decay_kld=None,
                           decay_kld_rate=None,
                           env_dim=111,
                           action_dim=8,
-                          use_xavier=False
+                          use_xavier=False,
+                          use_rms_obs=True,
+                          use_rms_latent=False
                           )
         agent.actor_critic = model
         agent.vae = vi
@@ -242,12 +205,10 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                                     gamma=0.99,
                                     latent_dim=latent_dim,
                                     use_env_obs=True,
-                                    min_action=None,
-                                    max_action=None,
                                     max_sigma=task_generator.latent_min_std.tolist(),
                                     min_sigma=task_generator.latent_max_std.tolist(),
                                     action_space=action_space,
-                                    obs_shape=(111+8,),
+                                    obs_shape=(111 + 8,),
                                     clip_param=0.2,
                                     ppo_epoch=4,
                                     num_mini_batch=8,
@@ -263,15 +224,14 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                                     recurrent_policy=False,
                                     hidden_size=16,
                                     use_elu=True,
-                                    rescale_obs=False,
-                                    max_old=None,
-                                    min_old=None,
                                     use_decay_kld=None,
                                     decay_kld_rate=None,
                                     env_dim=111,
                                     action_dim=8,
                                     use_xavier=False,
-                                    vae_max_steps=None)
+                                    vae_max_steps=None,
+                                    use_rms_obs=True,
+                                    use_rms_latent=False)
         agent.actor_critic = model
         agent.vi = vi
 

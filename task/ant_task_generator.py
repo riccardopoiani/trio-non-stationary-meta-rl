@@ -27,7 +27,7 @@ class AntTaskGenerator(TaskGenerator):
 
             task_param = torch.normal(mu, var.sqrt())
 
-            if torch.any(task_param > self.latent_max_mean) | torch.any(task_param< self.latent_min_mean):
+            if torch.any(task_param > self.latent_max_mean) | torch.any(task_param < self.latent_min_mean):
                 ok = True
             else:
                 ok = False

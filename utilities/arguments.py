@@ -43,6 +43,7 @@ def get_args():
     parser.add_argument('--use-decay-kld', type=lambda x: int(x) != 0, default=True)
     parser.add_argument('--decay-kld-rate', type=float, default=None)
     parser.add_argument('--vae-max-steps', type=int, default=None)
+    parser.add_argument('--vae-rand', type=lambda x: int(x) != 0, default=False)
 
     # General settings
     parser.add_argument('--training-iter', default=10000, type=int, help="number of training iterations")
@@ -56,6 +57,8 @@ def get_args():
     parser.add_argument('--verbose', type=lambda x: int(x) != 0, default=True)
     parser.add_argument('--folder', type=str, default="")
     parser.add_argument('--task-len', type=int, default=1)
+    parser.add_argument('--use-rms-obs', type=lambda x: int(x) != 0, default=False)
+    parser.add_argument('--use-rms-latent', type=lambda x: int(x) != 0, default=False)
 
     # Cuda parameters
     parser.add_argument('--no-cuda', action='store_true', default=True, help='disables CUDA training')

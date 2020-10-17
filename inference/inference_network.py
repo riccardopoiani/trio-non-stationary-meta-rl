@@ -113,7 +113,7 @@ class MujocoInferenceNetwork(torch.nn.Module):
         self.seq_len = 0
 
     def encode(self, context, prior, use_prev_state):
-        # Compute batch number and lenght of the sequence
+        # Compute batch number and length of the sequence
         n_batch = context.shape[0]
         seq_len = context.shape[1]
 

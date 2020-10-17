@@ -6,7 +6,7 @@ from gym import spaces
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel, DotProduct
 
-from inference.inference_network import InferenceNetwork
+from inference.inference_network import InferenceNetwork, MujocoInferenceNetwork
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
@@ -15,7 +15,13 @@ from utilities.arguments import get_args
 from utilities.folder_management import handle_folder_creation
 
 
-def get_sin_task_sequence_full_range(n_restarts, num_test_processes, std):
+def f_double_step(x, y_min=-0.5, y_max=0.5, first_peak=10, second_peak=20):
+    if x < first_peak or x > second_peak:
+        return y_min
+    return y_max
+
+
+def get_double_step_sequences(n_restarts, num_test_processes, std):
     kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
 
     gp_list = []
@@ -24,21 +30,21 @@ def get_sin_task_sequence_full_range(n_restarts, num_test_processes, std):
                                                  n_restarts_optimizer=n_restarts)
                         for _ in range(num_test_processes)])
 
-    init_prior_test = [torch.tensor([[0.5], [0.5]], dtype=torch.float32)
+    init_prior_test = [torch.tensor([[f_double_step(0)], [0.2 ** (1 / 2)]], dtype=torch.float32)
                        for _ in range(num_test_processes)]
 
     prior_seq = []
-    for idx in range(10):
-        mean = 0.5
-        prior_seq.append(torch.tensor([[mean], [std ** 2]], dtype=torch.float32))
+    for idx in range(0, 30):
+        friction = f_double_step(idx)
+        prior_seq.append(torch.tensor([[friction], [std ** 2]], dtype=torch.float32))
 
     return gp_list, prior_seq, init_prior_test
 
 
 def get_sequences(n_restarts, num_test_processes, std):
     # Retrieve task
-    gp_list_sin, prior_seq_sin, init_prior_sin = get_sin_task_sequence_full_range(n_restarts, num_test_processes,
-                                                                                  std)
+    gp_list_sin, prior_seq_sin, init_prior_sin = get_double_step_sequences(n_restarts, num_test_processes,
+                                                                           std)
 
     # Fill lists
     prior_sequences = [prior_seq_sin]
@@ -54,7 +60,7 @@ def main():
     folder = "result/scalegauss/"
     env_name = "scalegauss-v0"
     prior_var_min = 0.001
-    prior_var_max = 0.5
+    prior_var_max = 1
     noise_seq_var = 0.001
     latent_dim = 1
     min_action = -1.
@@ -112,7 +118,8 @@ def main():
                     use_gae=args.use_gae,
                     gae_lambda=args.gae_lambda,
                     use_proper_time_limits=args.use_proper_time_limits,
-                    use_xavier=args.use_xavier)
+                    use_xavier=args.use_xavier,
+                    use_obs_rms=args.use_rms_obs)
 
         eval_list, test_list = agent.train(n_iter=args.training_iter,
                                            env_name=env_name,
@@ -133,8 +140,6 @@ def main():
 
         torch.save(agent.actor_critic, "{}rl2_actor_critic".format(folder_path_with_date))
     elif args.algo == 'ts_opt':
-        max_old = None
-        min_old = None
         obs_shape = (1,)
 
         vi = InferenceNetwork(n_in=4, z_dim=latent_dim)
@@ -148,8 +153,6 @@ def main():
                                     gamma=args.gamma,
                                     latent_dim=latent_dim,
                                     use_env_obs=False,
-                                    min_action=None,
-                                    max_action=None,
                                     max_sigma=[prior_var_max ** (1 / 2)],
                                     min_sigma=[prior_var_min ** (1 / 2)],
                                     action_space=action_space,
@@ -169,15 +172,14 @@ def main():
                                     recurrent_policy=args.recurrent,
                                     hidden_size=args.hidden_size,
                                     use_elu=args.use_elu,
-                                    rescale_obs=False,
-                                    max_old=max_old,
-                                    min_old=min_old,
                                     use_decay_kld=args.use_decay_kld,
                                     decay_kld_rate=args.decay_kld_rate,
                                     env_dim=0,
                                     action_dim=1,
                                     vae_max_steps=args.vae_max_steps,
-                                    use_xavier=args.use_xavier)
+                                    use_xavier=args.use_xavier,
+                                    use_rms_obs=args.use_rms_obs,
+                                    use_rms_latent=args.use_rms_latent)
 
         vi_loss, eval_list, test_list, final_test = agent.train(n_train_iter=args.training_iter,
                                                                 init_vae_steps=args.init_vae_steps,
@@ -240,20 +242,17 @@ def main():
                           use_elu=args.use_elu,
                           variational_model=vi,
                           vae_optim=vi_optim,
-                          rescale_obs=False,
-                          max_old=None,
-                          min_old=None,
                           vae_min_seq=vae_min_seq,
                           vae_max_seq=vae_max_seq,
-                          max_action=None,
-                          min_action=None,
                           max_sigma=[prior_var_max ** (1 / 2)],
                           min_sigma=[prior_var_min ** (1 / 2)],
                           use_decay_kld=args.use_decay_kld,
                           decay_kld_rate=args.decay_kld_rate,
                           env_dim=0,
                           action_dim=1,
-                          use_xavier=args.use_xavier
+                          use_xavier=args.use_xavier,
+                          use_rms_obs=args.use_rms_obs,
+                          use_rms_latent=args.use_rms_latent
                           )
 
         res_eval, res_vae, test_list, final_test = agent.train(training_iter=args.training_iter,
@@ -272,7 +271,8 @@ def main():
                                                                init_prior_test_sequences=init_prior,
                                                                verbose=args.verbose,
                                                                vae_smart=args.vae_smart,
-                                                               task_len=args.task_len
+                                                               task_len=args.task_len,
+                                                               vae_rand=args.vae_rand
                                                                )
 
         with open("{}vae.pkl".format(folder_path_with_date), "wb") as output:

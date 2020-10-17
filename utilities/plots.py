@@ -15,8 +15,10 @@ def view_results(r_list, label_list, has_track_list, num_seq, prior_seqs, init_p
         for r, label, has_track in zip(r_list, label_list, has_track_list):
             r = np.array(r)
             if not has_track:
-                plt.plot(np.mean(r[:, seq, :], 0), label=label)
+                r = np.array([r[i][seq] for i in range(r.shape[0])])
+                plt.plot(np.mean(r, 0), label=label)
             else:
+                print(r.shape)
                 t = np.array([r[p, 0, seq] for p in range(r.shape[0])])
                 plt.plot(np.mean(t, 0), label=label + " True sigma")
 
@@ -30,11 +32,12 @@ def view_results(r_list, label_list, has_track_list, num_seq, prior_seqs, init_p
                 plt.plot(np.mean(t, 0), label=label + " No tracking")
 
         plt.title("Seq idx {}".format(seq))
+        # plt.legend(title='legend', bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.legend()
         if save_fig:
             plt.savefig("{}seq_{}_reward".format(folder, seq))
-        # plt.show()
-
+        plt.show()
+        print("Here")
         if view_tracking:
             # View tracking
             for r, label, has_track in zip(r_list, label_list, has_track_list):
@@ -69,7 +72,7 @@ def view_results(r_list, label_list, has_track_list, num_seq, prior_seqs, init_p
                     t2[0] = init_priors[seq][0][0].item()
                     if rescale_latent is not None:
                         t2 = ((rescale_latent[1] - rescale_latent[0]) / (1 - (-1))) * (t2 - 1) + rescale_latent[1]
-                    plt.plot(x, t2, label=label + " Prediction false")
+                    plt.plot(x, t2, label=label + " Posterior false")
 
             num_t = len(prior_seqs[seq])
             true_task = np.array([prior_seqs[seq][i][0].item() for i in range(num_t)])
@@ -79,10 +82,11 @@ def view_results(r_list, label_list, has_track_list, num_seq, prior_seqs, init_p
             plt.plot(true_task, label="True task")
 
             plt.title("Seq idx {}".format(seq))
+            # plt.legend(title='legend', bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.legend()
             if save_fig:
                 plt.savefig("{}seq_{}_tracking".format(folder, seq))
-            # plt.show()
+            plt.show()
 
 
 def create_csv_tracking(r_list, label_list, has_track_list, num_seq, prior_seqs, seq_len_list, sequence_name_list,
