@@ -171,10 +171,16 @@ def get_vec_envs_multi_task(env_name,
                             allow_early_resets,
                             env_kwargs_list,
                             use_vec_normalize,
+                            envs,
                             num_frame_stack=None,
                             ):
-    return make_vec_envs_multi_task(env_name, seed, num_processes, gamma, log_dir, device, allow_early_resets,
-                                    env_kwargs_list, num_frame_stack, use_vec_normalize)
+    if envs is None:
+        return make_vec_envs_multi_task(env_name, seed, num_processes, gamma, log_dir, device, allow_early_resets,
+                                        env_kwargs_list, num_frame_stack, use_vec_normalize)
+    else:
+        for i in range(num_processes):
+            envs.envs[i].set_latent(**env_kwargs_list[i])
+        return envs
 
 
 def make_vec_envs(env_name,

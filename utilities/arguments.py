@@ -31,6 +31,11 @@ def get_args():
     parser.add_argument('--gae_lambda', default=0.95, type=float)
     parser.add_argument('--use-proper-time-limits', default=False, type=lambda x: int(x) != 0)
     parser.add_argument('--use-xavier', default=False, type=lambda x: int(x) != 0)
+    parser.add_argument('--use-feature-extractor', default=False, type=lambda x: int(x) != 0)
+    parser.add_argument('--state-extractor-dim', default=None, type=int)
+    parser.add_argument('--latent-extractor-dim', default=None, type=int)
+    parser.add_argument('--uncertainty-extractor-dim', default=None, type=int)
+    parser.add_argument('--use-huber-loss', default=False, type=lambda x: int(x) != 0)
 
     # GP parameters
     parser.add_argument('--n-restarts-gp', default=10, type=int, help="number of restarts for GP at meta-test time")
@@ -44,6 +49,12 @@ def get_args():
     parser.add_argument('--decay-kld-rate', type=float, default=None)
     parser.add_argument('--vae-max-steps', type=int, default=None)
     parser.add_argument('--vae-rand', type=lambda x: int(x) != 0, default=False)
+    parser.add_argument('--vae-state-emb-dim', type=int, default=None)
+    parser.add_argument('--vae-action-emb-dim', type=int, default=None)
+    parser.add_argument('--vae-reward-emb-dim', type=int, default=None)
+    parser.add_argument('--vae-prior-emb-dim', type=int, default=None)
+    parser.add_argument('--vae-gru-dim', type=int, default=None)
+    parser.add_argument('--detach-every', type=int, default=None)
 
     # General settings
     parser.add_argument('--training-iter', default=10000, type=int, help="number of training iterations")

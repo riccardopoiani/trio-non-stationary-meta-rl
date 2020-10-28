@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
+import torch.nn.functional as F
 import numpy
 
 """
@@ -20,7 +20,8 @@ class PPO():
                  lr=None,
                  eps=None,
                  max_grad_norm=None,
-                 use_clipped_value_loss=True):
+                 use_clipped_value_loss=True,
+                 use_huber_loss=False):
 
         self.actor_critic = actor_critic
 
@@ -35,6 +36,8 @@ class PPO():
         self.use_clipped_value_loss = use_clipped_value_loss
 
         self.optimizer = optim.Adam(actor_critic.parameters(), lr=lr, eps=eps)
+
+        self.use_huber_loss = use_huber_loss
 
     def update(self, rollouts):
         advantages = rollouts.returns[:-1] - rollouts.value_preds[:-1]
@@ -70,7 +73,15 @@ class PPO():
                                     1.0 + self.clip_param) * adv_targ
                 action_loss = -torch.min(surr1, surr2).mean()
 
-                if self.use_clipped_value_loss:
+                if self.use_huber_loss and self.use_clipped_value_loss:
+                    value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.clip_param,
+                                                                                                self.clip_param)
+                    value_losses = F.smooth_l1_loss(values, return_batch, reduction='none')
+                    value_losses_clipped = F.smooth_l1_loss(value_pred_clipped, return_batch, reduction='none')
+                    value_loss = 0.5 * torch.max(value_losses, value_losses_clipped).mean()
+                elif self.use_huber_loss:
+                    value_loss = F.smooth_l1_loss(values, return_batch)
+                elif self.use_clipped_value_loss:
                     value_pred_clipped = value_preds_batch + \
                                          (values - value_preds_batch).clamp(-self.clip_param, self.clip_param)
                     value_losses = (values - return_batch).pow(2)
@@ -91,10 +102,6 @@ class PPO():
                 value_loss_epoch += value_loss.item()
                 action_loss_epoch += action_loss.item()
                 dist_entropy_epoch += dist_entropy.item()
-
-        if numpy.random.binomial(n=1, p=0):
-            t = (value_loss * self.value_loss_coef + action_loss - dist_entropy * self.entropy_coef)
-            print("Gradient {}".format(t.item()))
 
         num_updates = self.ppo_epoch * self.num_mini_batch
 

@@ -6,7 +6,7 @@ from gym import spaces
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel, DotProduct
 
-from inference.inference_network import InferenceNetwork, MujocoInferenceNetwork
+from inference.inference_network import InferenceNetwork, EmbeddingInferenceNetwork
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
@@ -119,7 +119,9 @@ def main():
                     gae_lambda=args.gae_lambda,
                     use_proper_time_limits=args.use_proper_time_limits,
                     use_xavier=args.use_xavier,
-                    use_obs_rms=args.use_rms_obs)
+                    use_obs_rms=args.use_rms_obs,
+                    use_huber_loss=args.use_huber_loss
+                    )
 
         eval_list, test_list = agent.train(n_iter=args.training_iter,
                                            env_name=env_name,
@@ -179,7 +181,13 @@ def main():
                                     vae_max_steps=args.vae_max_steps,
                                     use_xavier=args.use_xavier,
                                     use_rms_obs=args.use_rms_obs,
-                                    use_rms_latent=args.use_rms_latent)
+                                    use_rms_latent=args.use_rms_latent,
+                                    use_feature_extractor=args.use_feature_extractor,
+                                    state_extractor_dim=args.state_extractor_dim,
+                                    latent_extractor_dim=args.latent_extractor_dim,
+                                    use_huber_loss=args.use_huber_loss,
+                                    detach_every=args.detach_every
+                                    )
 
         vi_loss, eval_list, test_list, final_test = agent.train(n_train_iter=args.training_iter,
                                                                 init_vae_steps=args.init_vae_steps,
@@ -252,7 +260,13 @@ def main():
                           action_dim=1,
                           use_xavier=args.use_xavier,
                           use_rms_obs=args.use_rms_obs,
-                          use_rms_latent=args.use_rms_latent
+                          use_rms_latent=args.use_rms_latent,
+                          use_feature_extractor=args.use_feature_extractor,
+                          state_extractor_dim=args.state_extractor_dim,
+                          latent_extractor_dim=args.latent_extractor_dim,
+                          uncertainty_extractor_dim=args.uncertainty_extractor_dim,
+                          use_huber_loss=args.use_huber_loss,
+                          detach_every=args.detach_every
                           )
 
         res_eval, res_vae, test_list, final_test = agent.train(training_iter=args.training_iter,

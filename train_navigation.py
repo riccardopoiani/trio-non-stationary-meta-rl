@@ -8,7 +8,7 @@ from gym import spaces
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
-from inference.inference_network import MujocoInferenceNetwork
+from inference.inference_network import EmbeddingInferenceNetwork
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
@@ -191,7 +191,7 @@ def main():
         obs_shape = (latent_dim + 2 + signals_dim,)  # latent dim + obs
 
         # 2 action + 2 obs + 1 reward + prior (latent dim * 2)
-        vi = MujocoInferenceNetwork(n_in=2 + 2 + 1 + signals_dim + latent_dim * 2, z_dim=latent_dim)
+        vi = EmbeddingInferenceNetwork(n_in=2 + 2 + 1 + signals_dim + latent_dim * 2, z_dim=latent_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = PosteriorOptTSAgent(vi=vi,
@@ -270,7 +270,7 @@ def main():
         obs_shape = (2 * latent_dim + 2 + signals_dim,)
 
         # 2 action + 2 obs + 1 reward + 4 prior (latent dim * 2)
-        vi = MujocoInferenceNetwork(n_in=obs_shape[0] + 1 + 2, z_dim=latent_dim)
+        vi = EmbeddingInferenceNetwork(n_in=obs_shape[0] + 1 + 2, z_dim=latent_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = OursAgent(action_space=action_space, device=device, gamma=args.gamma,

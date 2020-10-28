@@ -5,7 +5,7 @@ import numpy as np
 import gym_sin
 from gym import spaces
 
-from inference.inference_network import MujocoInferenceNetwork
+from inference.inference_network import EmbeddingInferenceNetwork
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
@@ -119,8 +119,8 @@ def main():
     elif args.algo == 'ts_opt':
         obs_shape = (111 + 8,)  # latent dim + obs
 
-        vi = MujocoInferenceNetwork(n_in=8 + 111 + 1 + 16,
-                                    z_dim=latent_dim)  # 2 action + 2 obs + 1 reward + 10 prior (latent dim * 2)
+        vi = EmbeddingInferenceNetwork(n_in=8 + 111 + 1 + 16,
+                                       z_dim=latent_dim)  # 2 action + 2 obs + 1 reward + 10 prior (latent dim * 2)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = PosteriorOptTSAgent(vi=vi,
@@ -157,7 +157,11 @@ def main():
                                     vae_max_steps=args.vae_max_steps,
                                     use_xavier=args.use_xavier,
                                     use_rms_latent=args.use_rms_latent,
-                                    use_rms_obs=args.use_rms_obs)
+                                    use_rms_obs=args.use_rms_obs,
+                                    use_feature_extractor=args.use_feature_extractor,
+                                    state_extractor_dim=args.state_extractor_dim,
+                                    latent_extractor_dim=args.latent_extractor_dim
+                                    )
 
         vi_loss, eval_list, test_list, final_test, eval_opt = agent.train(n_train_iter=args.training_iter,
                                                                           init_vae_steps=args.init_vae_steps,
@@ -199,7 +203,7 @@ def main():
         obs_shape = (2 * latent_dim + 111,)
 
         # 8 action + (111 obs + 2 * latent_dim) + 1 reward
-        vi = MujocoInferenceNetwork(n_in=obs_shape[0] + 1 + 8, z_dim=latent_dim)
+        vi = EmbeddingInferenceNetwork(n_in=obs_shape[0] + 1 + 8, z_dim=latent_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = OursAgent(action_space=action_space, device=device, gamma=args.gamma,
@@ -231,7 +235,12 @@ def main():
                           min_sigma=prior_std_min,
                           use_xavier=args.use_xavier,
                           use_rms_obs=args.use_rms_obs,
-                          use_rms_latent=args.use_rms_latent)
+                          use_rms_latent=args.use_rms_latent,
+                          use_feature_extractor=args.use_feature_extractor,
+                          state_extractor_dim=args.state_extractor_dim,
+                          latent_extractor_dim=args.latent_extractor_dim,
+                          uncertainty_extractor_dim=args.uncertainty_extractor_dim
+                          )
 
         res_eval, res_vae, test_list, final_test = agent.train(training_iter=args.training_iter,
                                                                env_name=env_name,

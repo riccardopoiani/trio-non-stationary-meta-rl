@@ -5,7 +5,7 @@ import numpy as np
 import gym_sin
 from gym import spaces
 
-from inference.inference_network import MujocoInferenceNetwork
+from inference.inference_network import EmbeddingInferenceNetwork
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
@@ -116,8 +116,8 @@ def main():
         min_old = None
         obs_shape = (111 + 8,)  # latent dim + obs
 
-        vi = MujocoInferenceNetwork(n_in=8 + 111 + 1 + 16,
-                                    z_dim=latent_dim)  # 2 action + 2 obs + 1 reward + 10 prior (latent dim * 2)
+        vi = EmbeddingInferenceNetwork(n_in=8 + 111 + 1 + 16,
+                                       z_dim=latent_dim)  # 2 action + 2 obs + 1 reward + 10 prior (latent dim * 2)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = PosteriorOptTSAgent(vi=vi,
@@ -201,7 +201,7 @@ def main():
         obs_shape = (2 * latent_dim + 111,)
 
         # 8 action + (111 obs + 2 * latent_dim) + 1 reward
-        vi = MujocoInferenceNetwork(n_in=obs_shape[0] + 1 + 8, z_dim=latent_dim)
+        vi = EmbeddingInferenceNetwork(n_in=obs_shape[0] + 1 + 8, z_dim=latent_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = OursAgent(action_space=action_space, device=device, gamma=args.gamma,

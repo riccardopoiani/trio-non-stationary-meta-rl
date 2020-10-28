@@ -277,3 +277,80 @@ class ImprovedMLPBase(NNBase):
         hidden_actor = self.actor(x)
 
         return self.critic_linear(hidden_critic), hidden_actor, rnn_hxs
+
+
+class MLPFeatureExtractor(NNBase):
+    def __init__(self, num_inputs, latent_dim, latent_extractor_dim, state_dim, state_extractor_dim,
+                 has_uncertainty, uncertainty_extractor_dim=None, hidden_size=64, use_elu=True, use_xavier=False):
+        super(MLPFeatureExtractor, self).__init__(False, num_inputs, hidden_size)
+
+        if has_uncertainty:
+            assert state_extractor_dim + latent_extractor_dim + uncertainty_extractor_dim == hidden_size, \
+                "Network sizes do not match: {} + {} + {} != {}".format(state_extractor_dim, latent_extractor_dim,
+                                                                        uncertainty_extractor_dim, hidden_size)
+        else:
+            assert state_extractor_dim + latent_extractor_dim == hidden_size, \
+                "Network sizes do not match: {} + {} != {}".format(state_extractor_dim, latent_extractor_dim, hidden_size)
+        assert state_dim != 0 and latent_dim != 0
+
+        init_ = lambda m: init(m, torch.nn.init.orthogonal_, lambda x: torch.nn.init.
+                               constant_(x, 0), np.sqrt(2))
+
+        self.latent_dim = latent_dim
+        self.state_dim = state_dim
+        self.has_uncertainty = has_uncertainty
+
+        self.latent_extractor = torch.nn.Linear(latent_dim, latent_extractor_dim)
+        self.state_extractor = torch.nn.Linear(state_dim, state_extractor_dim)
+
+        if has_uncertainty:
+            self.uncertainty_extractor = torch.nn.Linear(latent_dim, uncertainty_extractor_dim)
+
+        self.extractor_activation_function = torch.nn.ELU() if use_elu else torch.nn.Tanh()
+
+        if use_elu:
+            self.actor = torch.nn.Sequential(
+                init_(torch.nn.Linear(hidden_size, hidden_size)), torch.nn.ELU(),
+                init_(torch.nn.Linear(hidden_size, hidden_size)), torch.nn.ELU())
+
+            self.critic = torch.nn.Sequential(
+                init_(torch.nn.Linear(hidden_size, hidden_size)), torch.nn.ELU(),
+                init_(torch.nn.Linear(hidden_size, hidden_size)), torch.nn.ELU())
+        else:
+            self.actor = torch.nn.Sequential(
+                init_(torch.nn.Linear(hidden_size, hidden_size)), torch.nn.Tanh(),
+                init_(torch.nn.Linear(hidden_size, hidden_size)), torch.nn.Tanh())
+
+            self.critic = torch.nn.Sequential(
+                init_(torch.nn.Linear(hidden_size, hidden_size)), torch.nn.Tanh(),
+                init_(torch.nn.Linear(hidden_size, hidden_size)), torch.nn.Tanh())
+
+        self.critic_linear = init_(torch.nn.Linear(hidden_size, 1))
+
+        if use_xavier:
+            self.actor.apply(xavier_weights_init)
+            self.critic.apply(xavier_weights_init)
+
+        self.train()
+
+    def forward(self, inputs, rnn_hxs, masks):
+        # Break the input
+        s = inputs[:, 0:self.state_dim]
+        b = inputs[:, self.state_dim: self.state_dim + self.latent_dim]
+        if self.has_uncertainty:
+            u = inputs[:, self.state_dim + self.latent_dim: self.state_dim + self.latent_dim * 2]
+
+        # Encode the input
+        s = self.extractor_activation_function(self.state_extractor(s))
+        b = self.extractor_activation_function(self.latent_extractor(b))
+        if self.has_uncertainty:
+            u = self.extractor_activation_function(self.uncertainty_extractor(u))
+            x = torch.cat([s, b, u], 1)
+        else:
+            x = torch.cat([s, b], 1)
+
+        # Apply policy network
+        hidden_critic = self.critic(x)
+        hidden_actor = self.actor(x)
+
+        return self.critic_linear(hidden_critic), hidden_actor, rnn_hxs

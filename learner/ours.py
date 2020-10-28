@@ -7,7 +7,7 @@ import torch
 from inference.inference_utils import loss_inference_closed_form
 from ppo_a2c.algo.ppo import PPO
 from ppo_a2c.envs import get_vec_envs_multi_task, LatentSpaceSmoother
-from ppo_a2c.model import MLPBase, Policy
+from ppo_a2c.model import MLPBase, Policy, MLPFeatureExtractor
 from ppo_a2c.storage import RolloutStorage
 from utilities.observation_utils import augment_obs_posterior, get_posterior
 
@@ -49,7 +49,13 @@ class OursAgent:
                  min_sigma,
                  use_xavier,
                  use_rms_latent,
-                 use_rms_obs):
+                 use_rms_obs,
+                 use_feature_extractor,
+                 state_extractor_dim,
+                 latent_extractor_dim,
+                 uncertainty_extractor_dim,
+                 use_huber_loss,
+                 detach_every):
         # General parameters
         self.device = device
         self.gamma = gamma
@@ -76,6 +82,7 @@ class OursAgent:
         self.vae_optim = vae_optim
         self.use_decay_kld = use_decay_kld
         self.decay_kld_rate = decay_kld_rate
+        self.detach_every = detach_every
 
         # PPO parameters
         self.use_linear_lr_decay = use_linear_lr_decay
@@ -83,13 +90,30 @@ class OursAgent:
         self.gae_lambda = gae_lambda
         self.use_proper_time_limits = use_proper_time_limits
 
-        base = MLPBase
-        self.actor_critic = Policy(self.obs_shape,
-                                   self.action_space, base=base,
-                                   base_kwargs={'recurrent': recurrent_policy,
-                                                'hidden_size': hidden_size,
-                                                'use_elu': use_elu,
-                                                'use_xavier': use_xavier})
+        if use_feature_extractor:
+            base = MLPFeatureExtractor
+            self.actor_critic = Policy(self.obs_shape,
+                                       self.action_space, base=base,
+                                       base_kwargs={'hidden_size': hidden_size,
+                                                    'use_elu': use_elu,
+                                                    'use_xavier': use_xavier,
+                                                    'state_dim': self.env_dim,
+                                                    'latent_dim': self.latent_dim,
+                                                    'latent_extractor_dim': latent_extractor_dim,
+                                                    'state_extractor_dim': state_extractor_dim,
+                                                    'has_uncertainty': True,
+                                                    'uncertainty_extractor_dim': uncertainty_extractor_dim
+                                                    })
+        else:
+            base = MLPBase
+            self.actor_critic = Policy(self.obs_shape,
+                                       self.action_space, base=base,
+                                       base_kwargs={
+                                           'recurrent': recurrent_policy,
+                                           'hidden_size': hidden_size,
+                                           'use_elu': use_elu,
+                                           'use_xavier': use_xavier
+                                       })
 
         self.random_policy = Policy(self.obs_shape, self.action_space, base=MLPBase,
                                     base_kwargs={'recurrent': False,
@@ -106,7 +130,8 @@ class OursAgent:
                          lr=lr,
                          eps=eps,
                          max_grad_norm=max_grad_norm,
-                         use_clipped_value_loss=True)
+                         use_clipped_value_loss=True,
+                         use_huber_loss=use_huber_loss)
 
         self.envs = None
         self.eval_envs = None
@@ -161,6 +186,7 @@ class OursAgent:
                                                 allow_early_resets=True,
                                                 env_kwargs_list=envs_kwargs,
                                                 use_vec_normalize=self.use_rms_obs,
+                                                envs=self.envs,
                                                 num_frame_stack=None)
             self.multi_task_policy_step(prior, use_env_obs)
 
@@ -218,6 +244,7 @@ class OursAgent:
                                             allow_early_resets=True,
                                             env_kwargs_list=envs_kwargs,
                                             use_vec_normalize=self.use_rms_obs,
+                                            envs=self.envs,
                                             num_frame_stack=None)
 
         _, _, prior_list_policy, _ = task_generator.sample_pair_tasks(self.num_processes)
@@ -266,7 +293,7 @@ class OursAgent:
 
         # Now that data have been collected, we train the variational model
         self.vae_optim.zero_grad()
-        z_hat, mu_hat, logvar_hat = self.vae(context, prior)
+        z_hat, mu_hat, logvar_hat = self.vae(context, prior, detach_every=self.detach_every)
 
         loss, kdl, mse = loss_inference_closed_form(z=new_tasks,
                                                     mu_hat=mu_hat,
@@ -303,6 +330,7 @@ class OursAgent:
                                             allow_early_resets=True,
                                             env_kwargs_list=envs_kwargs,
                                             use_vec_normalize=self.use_rms_obs,
+                                            envs=self.envs,
                                             num_frame_stack=None)
         _, _, prior_list_policy, _ = task_generator.sample_pair_tasks(self.num_processes)
 
@@ -366,7 +394,7 @@ class OursAgent:
 
         # Now that data have been collected, we train the variational model
         self.vae_optim.zero_grad()
-        z_hat, mu_hat, logvar_hat = self.vae(context, prior)
+        z_hat, mu_hat, logvar_hat = self.vae(context, prior, detach_every=self.detach_every)
 
         loss, kdl, mse = loss_inference_closed_form(z=new_tasks,
                                                     mu_hat=mu_hat,
@@ -402,6 +430,7 @@ class OursAgent:
                                             allow_early_resets=True,
                                             env_kwargs_list=envs_kwargs,
                                             use_vec_normalize=self.use_rms_obs,
+                                            envs=self.envs,
                                             num_frame_stack=None)
         # Data structure for the loss function
         prior = torch.empty(self.num_processes, self.latent_dim * 2)
@@ -458,7 +487,7 @@ class OursAgent:
 
         # Now that data have been collected, we train the variational model
         self.vae_optim.zero_grad()
-        z_hat, mu_hat, logvar_hat = self.vae(context, prior)
+        z_hat, mu_hat, logvar_hat = self.vae(context, prior, detach_every=self.detach_every)
 
         loss, kdl, mse = loss_inference_closed_form(z=new_tasks,
                                                     mu_hat=mu_hat,
@@ -540,19 +569,20 @@ class OursAgent:
 
         for num_iteration in range(n_iter):
             envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            self.envs = get_vec_envs_multi_task(env_name=env_name,
-                                                seed=seed,
-                                                num_processes=self.num_processes,
-                                                gamma=self.gamma,
-                                                log_dir=log_dir,
-                                                device=self.device,
-                                                allow_early_resets=True,
-                                                env_kwargs_list=envs_kwargs,
-                                                use_vec_normalize=self.use_rms_obs,
-                                                num_frame_stack=None)
+            self.eval_envs = get_vec_envs_multi_task(env_name=env_name,
+                                                     seed=seed,
+                                                     num_processes=self.num_processes,
+                                                     gamma=self.gamma,
+                                                     log_dir=log_dir,
+                                                     device=self.device,
+                                                     allow_early_resets=True,
+                                                     env_kwargs_list=envs_kwargs,
+                                                     use_vec_normalize=self.use_rms_obs,
+                                                     envs=None,
+                                                     num_frame_stack=None)
             eval_episode_rewards = []
 
-            obs = self.envs.reset()
+            obs = self.eval_envs.reset()
             latent_smoother = LatentSpaceSmoother(shape=self.latent_dim * 2) if self.use_rms_latent else None
             obs = augment_obs_posterior(obs=obs, latent_dim=self.latent_dim, posterior=prior,
                                         use_env_obs=use_env_obs, is_prior=True, rms=latent_smoother)
@@ -572,7 +602,7 @@ class OursAgent:
                         deterministic=False)
 
                 # Observe reward and next obs
-                obs, reward, done, infos = self.envs.step(action)
+                obs, reward, done, infos = self.eval_envs.step(action)
                 posterior = get_posterior(vi=self.vae, action=action, reward=reward, prior=prior,
                                           use_prev_state=use_prev_state, use_env_obs=use_env_obs,
                                           env_obs=obs)
@@ -611,19 +641,20 @@ class OursAgent:
 
         for _ in range(n_iter):
             envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            self.envs = get_vec_envs_multi_task(env_name=env_name,
-                                                seed=seed,
-                                                num_processes=self.num_processes,
-                                                gamma=self.gamma,
-                                                log_dir=log_dir,
-                                                device=self.device,
-                                                allow_early_resets=True,
-                                                env_kwargs_list=envs_kwargs,
-                                                use_vec_normalize=self.use_rms_obs,
-                                                num_frame_stack=None)
+            self.eval_envs = get_vec_envs_multi_task(env_name=env_name,
+                                                     seed=seed,
+                                                     num_processes=self.num_processes,
+                                                     gamma=self.gamma,
+                                                     log_dir=log_dir,
+                                                     device=self.device,
+                                                     allow_early_resets=True,
+                                                     env_kwargs_list=envs_kwargs,
+                                                     use_vec_normalize=self.use_rms_obs,
+                                                     envs=None,
+                                                     num_frame_stack=None)
             eval_episode_rewards = []
 
-            obs = self.envs.reset()
+            obs = self.eval_envs.reset()
             latent_smoother = LatentSpaceSmoother(shape=self.latent_dim * 2) if self.use_rms_latent else None
             obs = augment_obs_posterior(obs=obs, latent_dim=self.latent_dim, posterior=prior,
                                         use_env_obs=use_env_obs, is_prior=True, rms=latent_smoother)
@@ -643,7 +674,7 @@ class OursAgent:
                         deterministic=False)
 
                 # Observe reward and next obs
-                obs, reward, done, infos = self.envs.step(action)
+                obs, reward, done, infos = self.eval_envs.step(action)
                 posterior = get_posterior(vi=self.vae, action=action, reward=reward, prior=prior,
                                           use_prev_state=use_prev_state, use_env_obs=use_env_obs,
                                           env_obs=obs)
@@ -686,7 +717,6 @@ class OursAgent:
 
         for seq_idx, s in enumerate(prior_sequences):
             env_kwargs_list = [task_generator.sample_task_from_prior(s[i]) for i in range(len(s))]
-            """
             print("ID {} SEQ {} TRUE".format(t_id, seq_idx))
             r, posterior_history, prediction_mean = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size,
                                                                             env_name, seed, log_dir,
@@ -713,7 +743,6 @@ class OursAgent:
             r_all_false_sigma.append(r)
             posterior_history_false.append(posterior_history)
             prediction_mean_false.append(prediction_mean)
-            """
 
             print("ID {} SEQ {} PRIOR".format(t_id, seq_idx))
             r, _, _ = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size, env_name, seed, log_dir,
@@ -766,6 +795,7 @@ class OursAgent:
                                                          allow_early_resets=True,
                                                          env_kwargs_list=[kwargs for _ in range(num_eval_processes)],
                                                          use_vec_normalize=self.use_rms_obs,
+                                                         envs=None,
                                                          num_frame_stack=None)
                 obs = self.eval_envs.reset()
                 latent_smoother = LatentSpaceSmoother(shape=self.latent_dim * 2) if self.use_rms_latent else None
@@ -809,12 +839,6 @@ class OursAgent:
 
                     for i, info in enumerate(infos):
                         if 'episode' in info.keys() and not already_ended[i]:
-                            print("Posterior {} Task {} Max diff {:.2f}".format(posterior[i],
-                                                                                kwargs['frictions'],
-                                                                                torch.max(torch.abs(
-                                                                                    posterior[i][0:self.latent_dim] -
-                                                                                    kwargs['frictions']
-                                                                                ))))
                             posterior_history[t, i, :] = posterior[i].clone().detach()
                             total_epi_reward = info['episode']['r']
                             task_epi_rewards.append(total_epi_reward)

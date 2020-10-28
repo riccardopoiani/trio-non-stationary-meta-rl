@@ -13,7 +13,7 @@ class RL2:
     def __init__(self, hidden_size, use_elu, clip_param, ppo_epoch, num_mini_batch, value_loss_coef,
                  entropy_coef, lr, eps, max_grad_norm, action_space, obs_shape, use_obs_env,
                  num_processes, gamma, device, num_steps, action_dim, use_gae, gae_lambda,
-                 use_proper_time_limits, use_xavier, use_obs_rms):
+                 use_proper_time_limits, use_xavier, use_obs_rms, use_huber_loss):
         self.obs_shape = obs_shape
         self.action_space = action_space
         self.use_obs_env = use_obs_env
@@ -45,7 +45,8 @@ class RL2:
                          lr=lr,
                          eps=eps,
                          max_grad_norm=max_grad_norm,
-                         use_clipped_value_loss=True)
+                         use_clipped_value_loss=True,
+                         use_huber_loss=use_huber_loss)
         self.envs = None
         self.eval_envs = None
         self.use_done = False

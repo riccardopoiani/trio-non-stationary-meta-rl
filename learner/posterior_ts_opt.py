@@ -4,7 +4,7 @@ import time
 from functools import reduce
 
 from ppo_a2c.algo.ppo import PPO
-from ppo_a2c.model import MLPBase, Policy
+from ppo_a2c.model import MLPBase, Policy, MLPFeatureExtractor
 from ppo_a2c.storage import RolloutStorage
 from utilities.observation_utils import get_posterior, augment_obs_optimal, augment_obs_oracle
 from inference.inference_utils import loss_inference_closed_form
@@ -48,13 +48,19 @@ class PosteriorOptTSAgent:
                  vae_max_steps,
                  use_xavier,
                  use_rms_latent,
-                 use_rms_obs):
+                 use_rms_obs,
+                 use_feature_extractor,
+                 state_extractor_dim,
+                 latent_extractor_dim,
+                 use_huber_loss,
+                 detach_every):
         # Inference inference
         self.vi = vi
         self.vi_optim = vi_optim
         self.use_decay_kld = use_decay_kld
         self.decay_kld_rate = decay_kld_rate
         self.vae_max_steps = vae_max_steps
+        self.detach_every = detach_every
 
         # Smoother
         self.use_rms_latent = use_rms_latent
@@ -85,13 +91,29 @@ class PosteriorOptTSAgent:
         self.gae_lambda = gae_lambda
         self.use_proper_time_limits = use_proper_time_limits
 
-        base = MLPBase
-        self.actor_critic = Policy(self.obs_shape,
-                                   self.action_space, base=base,
-                                   base_kwargs={'recurrent': recurrent_policy,
-                                                'hidden_size': hidden_size,
-                                                'use_elu': use_elu,
-                                                'use_xavier': use_xavier})
+        if use_feature_extractor:
+            base = MLPFeatureExtractor
+            self.actor_critic = Policy(self.obs_shape,
+                                       self.action_space, base=base,
+                                       base_kwargs={'hidden_size': hidden_size,
+                                                    'use_elu': use_elu,
+                                                    'use_xavier': use_xavier,
+                                                    'state_dim': self.env_dim,
+                                                    'latent_dim': self.latent_dim,
+                                                    'latent_extractor_dim': latent_extractor_dim,
+                                                    'state_extractor_dim': state_extractor_dim,
+                                                    'has_uncertainty': False,
+                                                    'uncertainty_extractor_dim': None})
+        else:
+            base = MLPBase
+            self.actor_critic = Policy(self.obs_shape,
+                                       self.action_space, base=base,
+                                       base_kwargs={
+                                           'recurrent': recurrent_policy,
+                                           'hidden_size': hidden_size,
+                                           'use_elu': use_elu,
+                                           'use_xavier': use_xavier
+                                       })
 
         self.agent = PPO(self.actor_critic,
                          clip_param,
@@ -102,7 +124,8 @@ class PosteriorOptTSAgent:
                          lr=lr,
                          eps=eps,
                          max_grad_norm=max_grad_norm,
-                         use_clipped_value_loss=True)
+                         use_clipped_value_loss=True,
+                         use_huber_loss=use_huber_loss)
 
         self.envs = None
         self.eval_envs = None
@@ -186,6 +209,7 @@ class PosteriorOptTSAgent:
                                             allow_early_resets=True,
                                             env_kwargs_list=envs_kwargs,
                                             use_vec_normalize=self.use_rms_obs,
+                                            envs=self.envs,
                                             num_frame_stack=None)
 
         latent_smoother = LatentSpaceSmoother(shape=self.latent_dim) if self.use_rms_latent else None
@@ -241,6 +265,7 @@ class PosteriorOptTSAgent:
                                             allow_early_resets=True,
                                             env_kwargs_list=envs_kwargs,
                                             use_vec_normalize=self.use_rms_obs,
+                                            envs=self.envs,
                                             num_frame_stack=None)
         _, _, prior_policy_list, _ = task_generator.sample_pair_tasks(self.num_processes)
 
@@ -299,7 +324,7 @@ class PosteriorOptTSAgent:
                                        action_log_prob, value, reward, masks, bad_masks)
 
         self.vi_optim.zero_grad()
-        z_hat, mu_hat, logvar_hat = self.vi(context, prior)
+        z_hat, mu_hat, logvar_hat = self.vi(context, prior, detach_every=self.detach_every)
 
         loss, kdl, mse = loss_inference_closed_form(z=new_tasks,
                                                     mu_hat=mu_hat,
@@ -329,6 +354,7 @@ class PosteriorOptTSAgent:
                                             allow_early_resets=True,
                                             env_kwargs_list=envs_kwargs,
                                             use_vec_normalize=self.use_rms_obs,
+                                            envs=self.envs,
                                             num_frame_stack=None)
         # Data structure for the loss function
         prior = torch.empty(self.num_processes, self.latent_dim * 2)
@@ -383,7 +409,7 @@ class PosteriorOptTSAgent:
                                        action_log_prob, value, reward, masks, bad_masks)
 
         self.vi_optim.zero_grad()
-        z_hat, mu_hat, logvar_hat = self.vi(context, prior)
+        z_hat, mu_hat, logvar_hat = self.vi(context, prior, detach_every=self.detach_every)
 
         loss, kdl, mse = loss_inference_closed_form(z=new_tasks,
                                                     mu_hat=mu_hat,
@@ -412,17 +438,18 @@ class PosteriorOptTSAgent:
             eval_episode_rewards = []
 
             envs_kwargs, _, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            self.envs = get_vec_envs_multi_task(env_name=env_name,
-                                                seed=seed,
-                                                num_processes=self.num_processes,
-                                                gamma=self.gamma,
-                                                log_dir=log_dir,
-                                                device=self.device,
-                                                allow_early_resets=True,
-                                                env_kwargs_list=envs_kwargs,
-                                                use_vec_normalize=self.use_rms_obs,
-                                                num_frame_stack=None)
-            obs = self.envs.reset()
+            self.eval_envs = get_vec_envs_multi_task(env_name=env_name,
+                                                     seed=seed,
+                                                     num_processes=self.num_processes,
+                                                     gamma=self.gamma,
+                                                     log_dir=log_dir,
+                                                     device=self.device,
+                                                     allow_early_resets=True,
+                                                     env_kwargs_list=envs_kwargs,
+                                                     use_vec_normalize=self.use_rms_obs,
+                                                     envs=None,
+                                                     num_frame_stack=None)
+            obs = self.eval_envs.reset()
             latent_smoother = LatentSpaceSmoother(shape=self.latent_dim) if self.use_rms_latent else None
             obs = augment_obs_oracle(obs=obs, tasks=new_tasks,
                                      use_env_obs=self.use_env_obs,
@@ -441,7 +468,7 @@ class PosteriorOptTSAgent:
                         eval_masks,
                         deterministic=False)
                 # Observe reward and next obs
-                obs, reward, done, infos = self.envs.step(action)
+                obs, reward, done, infos = self.eval_envs.step(action)
                 obs = augment_obs_oracle(obs=obs, tasks=new_tasks,
                                          use_env_obs=self.use_env_obs, rms=latent_smoother)
 
@@ -473,17 +500,18 @@ class PosteriorOptTSAgent:
             eval_episode_rewards = []
 
             envs_kwargs, _, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            self.envs = get_vec_envs_multi_task(env_name=env_name,
-                                                seed=seed,
-                                                num_processes=self.num_processes,
-                                                gamma=self.gamma,
-                                                log_dir=log_dir,
-                                                device=self.device,
-                                                allow_early_resets=True,
-                                                env_kwargs_list=envs_kwargs,
-                                                use_vec_normalize=self.use_rms_obs,
-                                                num_frame_stack=None)
-            obs = self.envs.reset()
+            self.eval_envs = get_vec_envs_multi_task(env_name=env_name,
+                                                     seed=seed,
+                                                     num_processes=self.num_processes,
+                                                     gamma=self.gamma,
+                                                     log_dir=log_dir,
+                                                     device=self.device,
+                                                     allow_early_resets=True,
+                                                     env_kwargs_list=envs_kwargs,
+                                                     use_vec_normalize=self.use_rms_obs,
+                                                     envs=None,
+                                                     num_frame_stack=None)
+            obs = self.eval_envs.reset()
             latent_smoother = LatentSpaceSmoother(shape=self.latent_dim) if self.use_rms_latent else None
             obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=prior_list,
                                       use_env_obs=self.use_env_obs, is_prior=True, rms=latent_smoother)
@@ -501,7 +529,7 @@ class PosteriorOptTSAgent:
                         eval_masks,
                         deterministic=False)
                 # Observe reward and next obs
-                obs, reward, done, infos = self.envs.step(action)
+                obs, reward, done, infos = self.eval_envs.step(action)
                 posterior = get_posterior(vi=self.vi, action=action, reward=reward, prior=prior_list,
                                           use_prev_state=use_prev_state, use_env_obs=self.use_env_obs,
                                           env_obs=obs)
@@ -622,6 +650,7 @@ class PosteriorOptTSAgent:
                                                          allow_early_resets=True,
                                                          env_kwargs_list=[kwargs for _ in range(num_eval_processes)],
                                                          use_vec_normalize=self.use_rms_obs,
+                                                         envs=None,
                                                          num_frame_stack=None)
                 obs = self.eval_envs.reset()
                 latent_smoother = LatentSpaceSmoother(shape=self.latent_dim) if self.use_rms_latent else None
