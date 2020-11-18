@@ -1,19 +1,91 @@
-import torch
-import numpy as np
 from functools import reduce
+
+import numpy as np
+import torch
 
 from ppo_a2c.algo.ppo import PPO
 from ppo_a2c.envs import get_vec_envs_multi_task
-from ppo_a2c.model import MLPBase, Policy
+from ppo_a2c.model import MLPBase, Policy, MLPRL2FeatureExtractor, RL2Base
 from ppo_a2c.storage import RolloutStorage
-import time
+
 
 class RL2:
 
-    def __init__(self, hidden_size, use_elu, clip_param, ppo_epoch, num_mini_batch, value_loss_coef,
-                 entropy_coef, lr, eps, max_grad_norm, action_space, obs_shape, use_obs_env,
-                 num_processes, gamma, device, num_steps, action_dim, use_gae, gae_lambda,
-                 use_proper_time_limits, use_xavier, use_obs_rms, use_huber_loss):
+    def __init__(self,
+                 hidden_size,
+                 use_elu,
+                 clip_param,
+                 ppo_epoch,
+                 num_mini_batch,
+                 value_loss_coef,
+                 entropy_coef,
+                 lr,
+                 eps,
+                 max_grad_norm,
+                 action_space,
+                 obs_shape,
+                 use_obs_env,
+                 num_processes,
+                 gamma,
+                 device,
+                 num_steps,
+                 action_dim,
+                 state_dim,
+                 use_gae,
+                 gae_lambda,
+                 use_proper_time_limits,
+                 use_xavier,
+                 use_huber_loss,
+                 use_rms_rew,
+                 use_rms_rew_in_policy,
+                 use_rms_act,
+                 use_rms_state,
+                 use_extractor,
+                 state_extractor_dim,
+                 action_extractor_dim,
+                 reward_extractor_dim,
+                 done_extractor_dim,
+                 use_done,
+                 latent_dim):
+        """
+        :param hidden_size: hidden sizes of the layer of the policy network
+        :param use_elu: if True ELU activation will be used in the policy network, else Tanh will be used
+        :param clip_param: clip parameter to be used in PPO
+        :param ppo_epoch: number of PPO epochs per training iteration
+        :param num_mini_batch: number of mini batches that will be used in PPO
+        :param value_loss_coef: value loss coefficient used in PPO updates
+        :param entropy_coef: entropy coefficient used in PPO
+        :param lr: learning rate of Adam optimizer used for policy training
+        :param eps: epsilon parameter of Adam optimizer used for policy training
+        :param max_grad_norm: maximum gradient norm used in PPO
+        :param action_space: action space of the environment that the agent will be trained on
+        :param obs_shape: shape of the observation
+        :param use_obs_env: whether to use or not environment observation. This is False in MAB environments
+        :param num_processes: number of parallel processes that will collect data to update the policy
+        :param gamma: discount factor of RL problem
+        :param device: device on which the code will run
+        :param num_steps: number of steps that will be taken before updating the policy in each process
+        :param action_dim: action dimension
+        :param state_dim: state dimension
+        :param use_gae: True if Generalized Advantage Estimation should be used
+        :param gae_lambda: lambda parameter of Generalized Advantage Estimatino
+        :param use_proper_time_limits: whether to use proper time limits or not. If False, time limits will be
+        considered at the same way of terminal states
+        :param use_xavier:if True xavier init will be used for the Policy network; if False orthogonal init will
+        be used
+        :param use_huber_loss: whether to use a Huber loss in RL training or not
+        :param use_extractor: True if a more complex network that uses feature extraction layers and smoothers
+        should be used
+        :param use_rms_rew: True if reward should be smoothed in RL training
+        :param use_rms_rew_in_policy: True if reward should be smoothed when they are fed to the policy
+        :param use_rms_act: True if actions should be smoothed when they are fed to the policy
+        :param use_rms_state: True if state should be smoothed when it is fed to the policy
+        :param state_extractor_dim: dimension of the feature extraction layer that concerns the state
+        :param action_extractor_dim: dimension of the feature extraction layer that concerns the action
+        :param reward_extractor_dim: dimension of the feature extraction layer that concerns the reward
+        :param done_extractor_dim: dimension of the feature extraction layer that concerns the done signal
+        :param use_done: True if Policy should be conditioned on done signals
+        """
         self.obs_shape = obs_shape
         self.action_space = action_space
         self.use_obs_env = use_obs_env
@@ -22,19 +94,57 @@ class RL2:
         self.device = device
         self.num_steps = num_steps
         self.action_dim = action_dim
-        self.use_obs_rms = use_obs_rms
 
+        self.use_done = use_done
         self.use_gae = use_gae
         self.gae_lambda = gae_lambda
         self.use_proper_time_limits = use_proper_time_limits
 
-        base = MLPBase
-        self.actor_critic = Policy(self.obs_shape,
-                                   self.action_space, base=base,
-                                   base_kwargs={'recurrent': True,
-                                                'hidden_size': hidden_size,
-                                                'use_elu': use_elu,
-                                                'use_xavier': use_xavier})
+        self.use_rms_rew = use_rms_rew
+
+        if use_extractor:
+            base = MLPRL2FeatureExtractor
+            self.actor_critic = Policy(self.obs_shape,
+                                       self.action_space,
+                                       base=base,
+                                       base_kwargs={
+                                           'recurrent': True,
+                                           'hidden_size': hidden_size,
+                                           'use_elu': use_elu,
+                                           'use_xavier': use_xavier,
+                                           'state_dim': state_dim,
+                                           'state_extractor_dim': state_extractor_dim,
+                                           'action_dim': action_dim,
+                                           'action_extractor_dim': action_extractor_dim,
+                                           'reward_extractor_dim': reward_extractor_dim,
+                                           'done_extractor_dim': done_extractor_dim,
+                                           'has_done': use_done,
+                                           'norm_state': use_rms_state,
+                                           'norm_action': use_rms_act,
+                                           'norm_reward': use_rms_rew_in_policy
+                                       })
+        else:
+            """
+            base = MLPBase
+            self.actor_critic = Policy(self.obs_shape,
+                                       self.action_space, base=base,
+                                       base_kwargs={'recurrent': True,
+                                                    'hidden_size': hidden_size,
+                                                    'use_elu': use_elu,
+                                                    'use_xavier': use_xavier})
+            """
+            base = RL2Base
+            self.actor_critic = Policy(self.obs_shape,
+                                       self.action_space, base=base,
+                                       base_kwargs={
+                                           'latent_dim': latent_dim,
+                                           'hidden_size': hidden_size,
+                                           'use_elu': use_elu,
+                                           'ext_hidden_sizes': None,
+                                           'use_xavier': use_xavier,
+                                           'use_env_obs': use_obs_env,
+                                           'state_dim': state_dim
+                                       })
 
         self.agent = PPO(self.actor_critic,
                          clip_param,
@@ -49,7 +159,6 @@ class RL2:
                          use_huber_loss=use_huber_loss)
         self.envs = None
         self.eval_envs = None
-        self.use_done = False
 
     def train(self, n_iter, env_name, seed, task_generator,
               eval_interval, num_test_processes, num_random_task_to_eval,
@@ -57,9 +166,6 @@ class RL2:
 
         eval_list = []
         test_list = []
-
-        if task_len > 1:
-            self.use_done = True
 
         for i in range(n_iter):
             self.train_iter(env_name=env_name, seed=seed, task_generator=task_generator, log_dir=log_dir,
@@ -113,7 +219,8 @@ class RL2:
                                             device=self.device,
                                             allow_early_resets=True,
                                             env_kwargs_list=envs_kwargs,
-                                            use_vec_normalize=self.use_obs_rms,
+                                            normalize_rew=self.use_rms_rew,
+                                            envs=self.envs,
                                             num_frame_stack=None)
 
         obs = self.envs.reset()
@@ -143,19 +250,19 @@ class RL2:
                         keep_init_if_done_masks)
 
             # Observe reward and next obs
-            obs, reward, done, infos = self.envs.step(action)
+            obs, (reward, reward_norm), done, infos = self.envs.step(action)
             obs = self.build_obs(obs=obs, reward=reward, action=action, is_init=False, use_obs_env=self.use_obs_env,
                                  num_processes=self.num_processes, done=done)
 
             # If done then clean the history of observations.
             if self.use_done:
                 rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
-                                           action_log_prob, value, reward, keep_init_if_done_masks, bad_masks)
+                                           action_log_prob, value, reward_norm, keep_init_if_done_masks, bad_masks)
             else:
                 masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
                 bad_masks = torch.FloatTensor([[0.0] if 'bad_transition' in info.keys() else [1.0] for info in infos])
                 rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
-                                           action_log_prob, value, reward, masks, bad_masks)
+                                           action_log_prob, value, reward_norm, masks, bad_masks)
 
         with torch.no_grad():
             next_value = self.actor_critic.get_value(
@@ -177,20 +284,21 @@ class RL2:
 
         for _ in range(n_iter):
             envs_kwargs, prev_task, prior, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
-            self.envs = get_vec_envs_multi_task(env_name=env_name,
-                                                seed=seed,
-                                                num_processes=self.num_processes,
-                                                gamma=self.gamma,
-                                                log_dir=log_dir,
-                                                device=self.device,
-                                                allow_early_resets=True,
-                                                env_kwargs_list=envs_kwargs,
-                                                use_vec_normalize=self.use_obs_rms,
-                                                num_frame_stack=None)
+            self.eval_envs = get_vec_envs_multi_task(env_name=env_name,
+                                                     seed=seed,
+                                                     num_processes=self.num_processes,
+                                                     gamma=self.gamma,
+                                                     log_dir=log_dir,
+                                                     device=self.device,
+                                                     allow_early_resets=True,
+                                                     env_kwargs_list=envs_kwargs,
+                                                     envs=None,
+                                                     normalize_rew=self.use_rms_rew,
+                                                     num_frame_stack=None)
 
             eval_episode_rewards = []
 
-            obs = self.envs.reset()
+            obs = self.eval_envs.reset()
             obs = self.build_obs(obs=obs, reward=None, action=None, is_init=True, use_obs_env=self.use_obs_env,
                                  num_processes=self.num_processes, done=None)
 
@@ -208,7 +316,7 @@ class RL2:
                         deterministic=False)
 
                 # Observe reward and next obs
-                obs, reward, done, infos = self.envs.step(action)
+                obs, (reward, reward_norm), done, infos = self.eval_envs.step(action)
                 obs = self.build_obs(obs=obs, reward=reward, action=action, is_init=False, use_obs_env=self.use_obs_env,
                                      num_processes=self.num_processes, done=done)
 
@@ -231,10 +339,6 @@ class RL2:
 
     def meta_test(self, prior_task_sequences, task_generator, num_test_processes, env_name, seed, log_dir,
                   task_len):
-        if task_len > 1:
-            self.use_done = True
-        else:
-            self.use_done = False
 
         result_all = []
 
@@ -254,8 +358,10 @@ class RL2:
                                                              log_dir=log_dir,
                                                              device=self.device,
                                                              allow_early_resets=True,
-                                                             env_kwargs_list=[kwargs for _ in range(num_test_processes)],
-                                                             use_vec_normalize=self.use_obs_rms,
+                                                             env_kwargs_list=[kwargs for _ in
+                                                                              range(num_test_processes)],
+                                                             normalize_rew=self.use_rms_rew,
+                                                             envs=None,
                                                              num_frame_stack=None)
                     eval_episode_rewards = []
 
@@ -284,8 +390,7 @@ class RL2:
                                 deterministic=False)
 
                         # Observe reward and next obs
-                        time.sleep(.002)
-                        obs, reward, done, infos = self.eval_envs.step(action)
+                        obs, (reward, reward_norm), done, infos = self.eval_envs.step(action)
                         obs = self.build_obs(obs=obs, reward=reward, action=action, is_init=False,
                                              use_obs_env=self.use_obs_env, num_processes=num_test_processes,
                                              done=done)

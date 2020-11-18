@@ -28,7 +28,7 @@ def get_test_args():
     parser.add_argument('--cuda-deterministic', action='store_true', default=False,
                         help="sets flags for determinism when using CUDA (potentially slow!)")
 
-    args = parser.parse_args()
+    args, rest_args = parser.parse_known_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
-    return args
+    return args, rest_args

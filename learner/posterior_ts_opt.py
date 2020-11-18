@@ -1,14 +1,14 @@
-import torch
-import numpy as np
-import time
 from functools import reduce
 
+import numpy as np
+import torch
+
+from inference.inference_utils import loss_inference_closed_form
 from ppo_a2c.algo.ppo import PPO
+from ppo_a2c.envs import get_vec_envs_multi_task
 from ppo_a2c.model import MLPBase, Policy, MLPFeatureExtractor
 from ppo_a2c.storage import RolloutStorage
 from utilities.observation_utils import get_posterior, augment_obs_optimal, augment_obs_oracle
-from inference.inference_utils import loss_inference_closed_form
-from ppo_a2c.envs import get_vec_envs_multi_task, LatentSpaceSmoother
 
 
 class PosteriorOptTSAgent:
@@ -49,11 +49,66 @@ class PosteriorOptTSAgent:
                  use_xavier,
                  use_rms_latent,
                  use_rms_obs,
+                 use_rms_rew,
                  use_feature_extractor,
                  state_extractor_dim,
                  latent_extractor_dim,
                  use_huber_loss,
                  detach_every):
+        """
+                :param action_space: action space of the environment that the agent will learn to solve
+                :param device: device that will be used to run the code
+                :param gamma: discount factor of the problem
+                :param num_steps: number of steps that the agent will collect before updating
+                :param num_processes: number of processes that will run in parallel before each update. This
+                corresponds also to the number of batches for training variational inference.
+                :param clip_param: clip parameter of PPO algorithm
+                :param ppo_epoch: number of PPO epochs update for each training iteration
+                :param num_mini_batch: number of mini batches that will be used in PPO
+                :param value_loss_coef: value loss coefficient for PPO algorithm
+                :param entropy_coef: entropy coefficient of PPO algorithm
+                :param lr: learning rate for Adam optimizer used in PPO
+                :param eps: epsilon parameter for Adam optimizer used in PPO
+                :param max_grad_norm: maximum gradient norm used in PPO
+                :param use_linear_lr_decay: whether to use a linear decay of the learning rate. Unsupported at the moment
+                :param use_gae: whether to use or not Generalized Advantage Estimation in PPO updates
+                :param gae_lambda: lambda parameter of Generalized Advantage Estimation in PPO updates
+                :param use_proper_time_limits: whether to use proper time limits or not. If False, time limits will be
+                considered at the same way of terminal states
+                :param obs_shape: shape of the observation. This contains environment state,
+                latent mean estimation and uncertainty about the latent space
+                :param latent_dim: dimension of the latent space
+                :param recurrent_policy: whether to use a recurrent policy
+                :param hidden_size: size of the hidden layers of the networks
+                :param use_elu: True if hidden layers of policy networks should use ELU actiovation function. If False
+                is used, Tanh will be used
+                :param vi: variational inference network
+                :param vi_optim: optimizer for the variational inference network
+                :param max_sigma: maximum std that can be set at meta-test time at the end of each task for the prediction
+                of the prior of the next task
+                :param min_sigma: minimum std that can be set at meta-test time at the end of each task for the prediction
+                of the prior of the next task
+                :param use_decay_kld: True if the weight of KLD loss used in inference training should decrease as the
+                number of samples increase
+                :param vae_max_steps: maximum number of steps per batch that will be used in VAE training
+                :param decay_kld_rate: Initial weight of KLD loss used in inference training when the network as seen
+                only 1 sample. This should be considered only in the case in which use_decay_kld is True
+                :param env_dim: state dimension of environment observation
+                :param action_dim: action dimension
+                :param use_xavier: if True xavier init will be used for the Policy network; if False orthogonal init will
+                be used
+                :param use_rms_latent: True if latent space should be smoothed when the input is fed to the policy
+                :param use_rms_obs: True if env. state observation should be smoothed when the input is
+                :param use_rms_rew: True if reward should be smoothed in PPO updates
+                :param use_feature_extractor: whether to use or not a more complex policy network that can use smoother
+                and feature extractors layers
+                :param state_extractor_dim: dimension of the state feature extractor to be used at the beginning of the policy
+                :param latent_extractor_dim: dimension of the latent mean estimation feature extraction layer to be
+                used at the beginning of the policy
+                :param use_huber_loss: whether to use a Huber loss in RL training or not
+                :param detach_every: if it is not None, than VAE back-propagation through time will stop after this number
+                of steps
+                """
         # Inference inference
         self.vi = vi
         self.vi_optim = vi_optim
@@ -63,8 +118,7 @@ class PosteriorOptTSAgent:
         self.detach_every = detach_every
 
         # Smoother
-        self.use_rms_latent = use_rms_latent
-        self.use_rms_obs = use_rms_obs
+        self.use_rms_rew = use_rms_rew
 
         # General settings
         self.use_env_obs = use_env_obs
@@ -103,7 +157,11 @@ class PosteriorOptTSAgent:
                                                     'latent_extractor_dim': latent_extractor_dim,
                                                     'state_extractor_dim': state_extractor_dim,
                                                     'has_uncertainty': False,
-                                                    'uncertainty_extractor_dim': None})
+                                                    'uncertainty_extractor_dim': None,
+                                                    'norm_state': use_rms_obs,
+                                                    'norm_latent': use_rms_latent,
+                                                    'decouple_latent_rms': False
+                                                    })
         else:
             base = MLPBase
             self.actor_critic = Policy(self.obs_shape,
@@ -208,14 +266,13 @@ class PosteriorOptTSAgent:
                                             device=self.device,
                                             allow_early_resets=True,
                                             env_kwargs_list=envs_kwargs,
-                                            use_vec_normalize=self.use_rms_obs,
+                                            normalize_rew=self.use_rms_rew,
                                             envs=self.envs,
                                             num_frame_stack=None)
 
-        latent_smoother = LatentSpaceSmoother(shape=self.latent_dim) if self.use_rms_latent else None
         obs = self.envs.reset()
         obs = augment_obs_oracle(obs=obs, tasks=new_tasks,
-                                 use_env_obs=self.use_env_obs, rms=latent_smoother)
+                                 use_env_obs=self.use_env_obs)
 
         rollouts_multi_task = RolloutStorage(self.num_steps, self.num_processes,
                                              self.obs_shape, self.action_space,
@@ -232,15 +289,15 @@ class PosteriorOptTSAgent:
                     rollouts_multi_task.masks[step])
 
             # Observe reward and next obs
-            obs, reward, done, infos = self.envs.step(action)
+            obs, (reward, reward_norm), done, infos = self.envs.step(action)
             obs = augment_obs_oracle(obs=obs, tasks=new_tasks,
-                                     use_env_obs=self.use_env_obs, rms=latent_smoother)
+                                     use_env_obs=self.use_env_obs)
 
             # If done then clean the history of observations.
             masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
             bad_masks = torch.FloatTensor([[0.0] if 'bad_transition' in info.keys() else [1.0] for info in infos])
             rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
-                                       action_log_prob, value, reward, masks, bad_masks)
+                                       action_log_prob, value, reward_norm, masks, bad_masks)
 
         with torch.no_grad():
             next_value = self.actor_critic.get_value(
@@ -264,7 +321,7 @@ class PosteriorOptTSAgent:
                                             device=self.device,
                                             allow_early_resets=True,
                                             env_kwargs_list=envs_kwargs,
-                                            use_vec_normalize=self.use_rms_obs,
+                                            normalize_rew=self.use_rms_rew,
                                             envs=self.envs,
                                             num_frame_stack=None)
         _, _, prior_policy_list, _ = task_generator.sample_pair_tasks(self.num_processes)
@@ -282,9 +339,9 @@ class PosteriorOptTSAgent:
             prior_policy[t_idx] = prior_policy_list[t_idx].reshape(1, self.latent_dim * 2).squeeze(0).clone().detach()
 
         obs = self.envs.reset()
-        latent_smoother = LatentSpaceSmoother(shape=self.latent_dim) if self.use_rms_latent else None
+
         obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=prior_policy,
-                                  use_env_obs=self.use_env_obs, is_prior=True, rms=latent_smoother)
+                                  use_env_obs=self.use_env_obs, is_prior=True)
         rollouts_multi_task = RolloutStorage(self.vae_max_steps, self.num_processes,
                                              self.obs_shape, self.action_space,
                                              self.actor_critic.recurrent_hidden_state_size)
@@ -302,7 +359,7 @@ class PosteriorOptTSAgent:
                     rollouts_multi_task.obs[step], rollouts_multi_task.recurrent_hidden_states[step],
                     rollouts_multi_task.masks[step])
 
-            obs, reward, done, infos = self.envs.step(action)
+            obs, (reward, reward_norm), done, infos = self.envs.step(action)
 
             if self.use_env_obs:
                 context[:, step, 1 + self.action_dim:] = obs
@@ -311,8 +368,7 @@ class PosteriorOptTSAgent:
                                       use_prev_state=use_prev_state, vi=self.vi,
                                       env_obs=obs, use_env_obs=self.use_env_obs)
             obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=posterior,
-                                      use_env_obs=self.use_env_obs, is_prior=False,
-                                      rms=latent_smoother)
+                                      use_env_obs=self.use_env_obs, is_prior=False)
 
             context[:, step, 0:self.action_dim] = action
             context[:, step, self.action_dim] = reward.squeeze(1)
@@ -321,7 +377,7 @@ class PosteriorOptTSAgent:
             bad_masks = torch.FloatTensor(
                 [[0.0] if 'bad_transition' in info.keys() else [1.0] for info in infos])
             rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
-                                       action_log_prob, value, reward, masks, bad_masks)
+                                       action_log_prob, value, reward_norm, masks, bad_masks)
 
         self.vi_optim.zero_grad()
         z_hat, mu_hat, logvar_hat = self.vi(context, prior, detach_every=self.detach_every)
@@ -353,7 +409,7 @@ class PosteriorOptTSAgent:
                                             device=self.device,
                                             allow_early_resets=True,
                                             env_kwargs_list=envs_kwargs,
-                                            use_vec_normalize=self.use_rms_obs,
+                                            normalize_rew=self.use_rms_rew,
                                             envs=self.envs,
                                             num_frame_stack=None)
         # Data structure for the loss function
@@ -367,9 +423,9 @@ class PosteriorOptTSAgent:
             logvar_prior[t_idx] = prior_list[t_idx][1].clone().detach().log()
 
         obs = self.envs.reset()
-        latent_smoother = LatentSpaceSmoother(shape=self.latent_dim) if self.use_rms_latent else None
+
         obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=prior, use_env_obs=self.use_env_obs,
-                                  is_prior=True, rms=latent_smoother)
+                                  is_prior=True)
 
         rollouts_multi_task = RolloutStorage(self.vae_max_steps, self.num_processes,
                                              self.obs_shape, self.action_space,
@@ -388,7 +444,7 @@ class PosteriorOptTSAgent:
                     rollouts_multi_task.obs[step], rollouts_multi_task.recurrent_hidden_states[step],
                     rollouts_multi_task.masks[step])
 
-            obs, reward, done, infos = self.envs.step(action)
+            obs, (reward, reward_norm), done, infos = self.envs.step(action)
 
             if self.use_env_obs:
                 context[:, step, 1 + self.action_dim:] = obs
@@ -397,7 +453,7 @@ class PosteriorOptTSAgent:
                                       use_prev_state=use_prev_state, vi=self.vi,
                                       env_obs=obs, use_env_obs=self.use_env_obs)
             obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=posterior,
-                                      use_env_obs=self.use_env_obs, is_prior=False, rms=latent_smoother)
+                                      use_env_obs=self.use_env_obs, is_prior=False)
 
             context[:, step, 0:self.action_dim] = action
             context[:, step, self.action_dim] = reward.squeeze(1)
@@ -406,7 +462,7 @@ class PosteriorOptTSAgent:
             bad_masks = torch.FloatTensor(
                 [[0.0] if 'bad_transition' in info.keys() else [1.0] for info in infos])
             rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
-                                       action_log_prob, value, reward, masks, bad_masks)
+                                       action_log_prob, value, reward_norm, masks, bad_masks)
 
         self.vi_optim.zero_grad()
         z_hat, mu_hat, logvar_hat = self.vi(context, prior, detach_every=self.detach_every)
@@ -446,14 +502,13 @@ class PosteriorOptTSAgent:
                                                      device=self.device,
                                                      allow_early_resets=True,
                                                      env_kwargs_list=envs_kwargs,
-                                                     use_vec_normalize=self.use_rms_obs,
+                                                     normalize_rew=self.use_rms_rew,
                                                      envs=None,
                                                      num_frame_stack=None)
             obs = self.eval_envs.reset()
-            latent_smoother = LatentSpaceSmoother(shape=self.latent_dim) if self.use_rms_latent else None
+
             obs = augment_obs_oracle(obs=obs, tasks=new_tasks,
-                                     use_env_obs=self.use_env_obs,
-                                     rms=latent_smoother)
+                                     use_env_obs=self.use_env_obs)
 
             eval_recurrent_hidden_states = torch.zeros(
                 self.num_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
@@ -468,9 +523,9 @@ class PosteriorOptTSAgent:
                         eval_masks,
                         deterministic=False)
                 # Observe reward and next obs
-                obs, reward, done, infos = self.eval_envs.step(action)
+                obs, (reward, reward_norm), done, infos = self.eval_envs.step(action)
                 obs = augment_obs_oracle(obs=obs, tasks=new_tasks,
-                                         use_env_obs=self.use_env_obs, rms=latent_smoother)
+                                         use_env_obs=self.use_env_obs)
 
                 eval_masks = torch.tensor(
                     [[0.0] if done_ else [1.0] for done_ in done],
@@ -508,13 +563,13 @@ class PosteriorOptTSAgent:
                                                      device=self.device,
                                                      allow_early_resets=True,
                                                      env_kwargs_list=envs_kwargs,
-                                                     use_vec_normalize=self.use_rms_obs,
+                                                     normalize_rew=self.use_rms_rew,
                                                      envs=None,
                                                      num_frame_stack=None)
             obs = self.eval_envs.reset()
-            latent_smoother = LatentSpaceSmoother(shape=self.latent_dim) if self.use_rms_latent else None
+
             obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=prior_list,
-                                      use_env_obs=self.use_env_obs, is_prior=True, rms=latent_smoother)
+                                      use_env_obs=self.use_env_obs, is_prior=True)
             eval_recurrent_hidden_states = torch.zeros(
                 self.num_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
             eval_masks = torch.zeros(self.num_processes, 1, device=self.device)
@@ -529,13 +584,13 @@ class PosteriorOptTSAgent:
                         eval_masks,
                         deterministic=False)
                 # Observe reward and next obs
-                obs, reward, done, infos = self.eval_envs.step(action)
+                obs, (reward, reward_norm), done, infos = self.eval_envs.step(action)
                 posterior = get_posterior(vi=self.vi, action=action, reward=reward, prior=prior_list,
                                           use_prev_state=use_prev_state, use_env_obs=self.use_env_obs,
                                           env_obs=obs)
                 obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=posterior,
                                           use_env_obs=self.use_env_obs,
-                                          is_prior=False, rms=latent_smoother)
+                                          is_prior=False)
                 use_prev_state = True
 
                 eval_masks = torch.tensor(
@@ -611,7 +666,8 @@ class PosteriorOptTSAgent:
                                               env_name,
                                               seed,
                                               log_dir,
-                                              env_kwargs_list, p,
+                                              env_kwargs_list,
+                                              p,
                                               num_eval_processes,
                                               use_true_sigma=None,
                                               use_real_prior=False,
@@ -649,17 +705,17 @@ class PosteriorOptTSAgent:
                                                          device=self.device,
                                                          allow_early_resets=True,
                                                          env_kwargs_list=[kwargs for _ in range(num_eval_processes)],
-                                                         use_vec_normalize=self.use_rms_obs,
+                                                         normalize_rew=self.use_rms_rew,
                                                          envs=None,
                                                          num_frame_stack=None)
                 obs = self.eval_envs.reset()
-                latent_smoother = LatentSpaceSmoother(shape=self.latent_dim) if self.use_rms_latent else None
+
                 if not use_prev_state:
                     obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=prior,
-                                              use_env_obs=self.use_env_obs, is_prior=True, rms=latent_smoother)
+                                              use_env_obs=self.use_env_obs, is_prior=True)
                 else:
                     obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=posterior_history[t, :, :],
-                                              use_env_obs=self.use_env_obs, is_prior=False, rms=latent_smoother)
+                                              use_env_obs=self.use_env_obs, is_prior=False)
                 eval_recurrent_hidden_states = torch.zeros(
                     num_eval_processes, self.actor_critic.recurrent_hidden_state_size, device=self.device)
                 eval_masks = torch.zeros(num_eval_processes, 1, device=self.device)
@@ -673,13 +729,13 @@ class PosteriorOptTSAgent:
                             eval_recurrent_hidden_states,
                             eval_masks,
                             deterministic=False)
-                    time.sleep(.002)
-                    obs, reward, done, infos = self.eval_envs.step(action)
+
+                    obs, (reward, reward_norm), done, infos = self.eval_envs.step(action)
                     posterior = get_posterior(vi=self.vi, action=action, reward=reward, prior=prior,
                                               use_prev_state=use_prev_state, use_env_obs=self.use_env_obs,
                                               env_obs=obs)
                     obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=posterior,
-                                              use_env_obs=self.use_env_obs, is_prior=False, rms=latent_smoother)
+                                              use_env_obs=self.use_env_obs, is_prior=False)
 
                     use_prev_state = True
                     eval_masks = torch.tensor(
@@ -714,7 +770,7 @@ class PosteriorOptTSAgent:
                                                    np.atleast_2d(posterior_history[0:t + 1, proc, dim].numpy()).T)
 
                 prior = []
-                curr_pred = []
+                curr_pred_all = [[] for _ in range(self.latent_dim)]
                 for proc in range(num_eval_processes):
                     prior_proc = torch.empty(2, self.latent_dim)
                     for dim in range(self.latent_dim):
@@ -728,7 +784,9 @@ class PosteriorOptTSAgent:
                                 prior_proc[1, dim] = sigma[0] ** 2
                         else:
                             prior_proc[1, dim] = self.max_sigma[dim] ** 2
-                        curr_pred.append(y_pred[0][0])
+                        curr_pred_all[dim].append(y_pred[0][0])
                     prior.append(prior_proc)
-                prediction_mean.append(np.mean(curr_pred))
+
+                curr_pred_all = np.array(curr_pred_all)
+                prediction_mean.append(np.mean(curr_pred_all, 1))
         return eval_episode_rewards, posterior_history, prediction_mean

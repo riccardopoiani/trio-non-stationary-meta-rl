@@ -2,7 +2,7 @@ import torch
 from task.task_generator import TaskGenerator
 
 
-class AntTaskGeneratorAdvanced(TaskGenerator):
+class AntTaskGeneratorPairJoint(TaskGenerator):
 
     def __init__(self,
                  friction_var_min_rnd,
@@ -10,7 +10,7 @@ class AntTaskGeneratorAdvanced(TaskGenerator):
                  friction_var_max_ok,
                  friction_var_min_ok,
                  n_frictions=4):
-        super(AntTaskGeneratorAdvanced, self).__init__()
+        super(AntTaskGeneratorPairJoint, self).__init__()
 
         self.max_mean_ok = 1
         self.min_mean_ok = 0.6

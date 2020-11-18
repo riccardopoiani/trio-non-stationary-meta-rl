@@ -5,16 +5,6 @@ import numpy as np
 
 
 class InferenceNetwork(torch.nn.Module):
-    """
-    Input:
-        Previous latent space
-        sequence of data from the current task and old task at that point
-        prior over the current task (expressed as vector mu and c)
-
-    Output:
-        - sample from the probability distribution over the latent space
-        - mu and logvar from the posterior distribution
-    """
 
     def __init__(self, n_in, z_dim, hidden_sizes=None):
         super(InferenceNetwork, self).__init__()
@@ -84,16 +74,6 @@ class InferenceNetwork(torch.nn.Module):
 
 
 class EmbeddingInferenceNetwork(torch.nn.Module):
-    """
-    Input:
-        Previous latent space
-        sequence of data from the current task and old task at that point
-        prior over the current task (expressed as vector mu and c)
-
-    Output:
-        - sample from the probability distribution over the latent space
-        - mu and logvar from the posterior distribution
-    """
 
     def __init__(self, z_dim, action_dim, action_embedding_dim, state_dim, state_embedding_dim,
                  reward_embedding_dim, prior_embedding_dim, hidden_size_dim):
@@ -108,10 +88,6 @@ class EmbeddingInferenceNetwork(torch.nn.Module):
         self.state_embedding_layer = torch.nn.Linear(state_dim, state_embedding_dim)
         self.reward_embedding_layer = torch.nn.Linear(1, reward_embedding_dim)
         self.prior_embedding_layer = torch.nn.Linear(z_dim * 2, prior_embedding_dim)
-
-        # self.enc1_pre_rec = torch.nn.Linear(self.n_in, 32)
-        # self.enc2_pre_rec = torch.nn.Linear(32, 32)
-        # self.enc3_pre_rec = torch.nn.Linear(32, 16)
 
         self.enc2 = torch.nn.GRU(input_size=self.n_in, hidden_size=hidden_size_dim, num_layers=1, batch_first=True)
         self.enc3 = torch.nn.Linear(hidden_size_dim + 1 + z_dim * 2,
@@ -146,14 +122,6 @@ class EmbeddingInferenceNetwork(torch.nn.Module):
 
         context = torch.cat([action, reward, state, prior], dim=2).view(n_batch, seq_len, self.n_in)
 
-        # Data processing
-        # context = self.enc1_pre_rec(context)
-        # context = F.elu(context)
-        # context = self.enc2_pre_rec(context)
-        # context = F.elu(context)
-        # context = self.enc3_pre_rec(context)
-        # context = F.elu(context)
-
         if detach_every is not None:
             hidden_state = None
             for i in range(int(np.ceil(seq_len / detach_every))):
@@ -177,7 +145,9 @@ class EmbeddingInferenceNetwork(torch.nn.Module):
         t = F.elu(t)
 
         self.seq_len += seq_len
-        trust = torch.tensor([self.seq_len], dtype=t.dtype).repeat(n_batch, 1)
+        trust = 1 / self.seq_len
+
+        trust = torch.tensor([trust], dtype=t.dtype).repeat(n_batch, 1)
         t = torch.cat([t, original_prior, trust], 1)
         t = F.elu(self.enc3(t))
 

@@ -44,6 +44,9 @@ class PPO():
         advantages = (advantages - advantages.mean()) / (
                 advantages.std() + 1e-5)
 
+        # update the normalisation parameters of policy inputs before updating
+        self.actor_critic.update_rms(storage=rollouts)
+
         value_loss_epoch = 0
         action_loss_epoch = 0
         dist_entropy_epoch = 0

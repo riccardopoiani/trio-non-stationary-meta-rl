@@ -8,12 +8,11 @@ import numpy as np
 import torch
 from baselines import bench
 from baselines.common.atari_wrappers import make_atari, wrap_deepmind
-from baselines.common.running_mean_std import RunningMeanStd
 from baselines.common.vec_env import VecEnvWrapper, ShmemVecEnv
 from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
-from baselines.common.vec_env.vec_normalize import \
-    VecNormalize as VecNormalize_
 from gym.spaces.box import Box
+
+from envs.utils.running_mean_std import RunningMeanStd
 
 try:
     import dm_control2gym
@@ -30,7 +29,7 @@ try:
 except ImportError:
     pass
 
-
+"""
 class LatentSpaceSmoother:
     def __init__(self, shape, clipob=10., epsilon=1e-8):
         self.clipob = clipob
@@ -42,6 +41,7 @@ class LatentSpaceSmoother:
         self.ob_rms.update(obs)
         obs = np.clip((obs - self.ob_rms.mean) / np.sqrt(self.ob_rms.var + self.epsilon), -self.clipob, self.clipob)
         return torch.tensor(obs, dtype=torch.float32)
+"""
 
 
 def make_env_multi_task(env_id, seed, rank, log_dir, allow_early_resets, kwargs):
@@ -137,8 +137,8 @@ def make_vec_envs_multi_task(env_name,
                              device,
                              allow_early_resets,
                              env_kwargs_list,
-                             num_frame_stack=None,
-                             use_vec_normalize=True):
+                             normalize_reward,
+                             num_frame_stack=None):
     envs = [
         make_env_multi_task(env_name, seed, i, log_dir, allow_early_resets, env_kwargs_list[i])
         for i in range(num_processes)
@@ -146,11 +146,10 @@ def make_vec_envs_multi_task(env_name,
 
     envs = DummyVecEnv(envs)
 
-    if use_vec_normalize:
-        if gamma is None:
-            envs = VecNormalize(envs, ret=False)
-        else:
-            envs = VecNormalize(envs, gamma=gamma)
+    if gamma is None:
+        envs = VecNormalize(envs, normalize_rew=normalize_reward, ret_rms=None)
+    else:
+        envs = VecNormalize(envs, normalize_rew=normalize_reward, ret_rms=None, gamma=gamma)
 
     envs = VecPyTorch(envs, device)
 
@@ -170,52 +169,19 @@ def get_vec_envs_multi_task(env_name,
                             device,
                             allow_early_resets,
                             env_kwargs_list,
-                            use_vec_normalize,
                             envs,
+                            normalize_rew,
                             num_frame_stack=None,
                             ):
     if envs is None:
-        return make_vec_envs_multi_task(env_name, seed, num_processes, gamma, log_dir, device, allow_early_resets,
-                                        env_kwargs_list, num_frame_stack, use_vec_normalize)
+        return make_vec_envs_multi_task(env_name=env_name, seed=seed, num_processes=num_processes, gamma=gamma,
+                                        log_dir=log_dir, device=device, allow_early_resets=allow_early_resets,
+                                        env_kwargs_list=env_kwargs_list, num_frame_stack=num_frame_stack,
+                                        normalize_reward=normalize_rew)
     else:
         for i in range(num_processes):
             envs.envs[i].set_latent(**env_kwargs_list[i])
         return envs
-
-
-def make_vec_envs(env_name,
-                  seed,
-                  num_processes,
-                  gamma,
-                  log_dir,
-                  device,
-                  allow_early_resets,
-                  num_frame_stack=None):
-    envs = [
-        make_env(env_name, seed, i, log_dir, allow_early_resets)
-        for i in range(num_processes)
-    ]
-
-    if len(envs) > 1:
-        envs = DummyVecEnv(envs)
-        # envs = MyShmemVecEnv(envs)
-    else:
-        envs = DummyVecEnv(envs)
-
-    if len(envs.observation_space.shape) == 1:
-        if gamma is None:
-            envs = VecNormalize(envs, ret=False)
-        else:
-            envs = VecNormalize(envs, gamma=gamma)
-
-    envs = VecPyTorch(envs, device)
-
-    if num_frame_stack is not None:
-        envs = VecPyTorchFrameStack(envs, num_frame_stack, device)
-    elif len(envs.observation_space.shape) == 3:
-        envs = VecPyTorchFrameStack(envs, 4, device)
-
-    return envs
 
 
 # Checks whether done was caused my timit limits or not
@@ -290,36 +256,58 @@ class VecPyTorch(VecEnvWrapper):
     def step_wait(self):
         obs, reward, done, info = self.venv.step_wait()
         obs = torch.from_numpy(obs).float().to(self.device)
-        reward = torch.from_numpy(reward).unsqueeze(dim=1).float()
+
+        if isinstance(reward, list):
+            reward = [torch.from_numpy(r).unsqueeze(dim=1).float() for r in reward]
+        else:
+            reward = torch.from_numpy(reward).unsqueeze(dim=1).float()
         return obs, reward, done, info
 
 
-class VecNormalize(VecNormalize_):
-    def __init__(self, *args, **kwargs):
-        super(VecNormalize, self).__init__(*args, **kwargs)
+class VecNormalize(VecEnvWrapper):
+    def __init__(self, venv, ret_rms, normalize_rew, clipob=10., cliprew=10., gamma=0.99, epsilon=1e-8):
+        super(VecNormalize, self).__init__(venv)
+        self.clipob = clipob
+        self.cliprew = cliprew
+        self.ret = np.zeros(self.num_envs)
+        self.gamma = gamma
+        self.epsilon = epsilon
+        self.ret_rms = ret_rms
+        self.normalize_rew = normalize_rew
+
+        if self.normalize_rew:
+            if ret_rms is None:
+                self.ret_rms = RunningMeanStd(shape=1)
+            else:
+                self.ret_rms = ret_rms
+
         self.training = True
 
+    def reset(self):
+        self.ret = np.zeros(self.num_envs)
+        obs = self.venv.reset()
+        return obs
+
     def step_wait(self):
-        obs, rews, news, infos = self.venv.step_wait()  # rews are the real reward from the env
-        self.ret = self.ret * self.gamma + rews  # update the cumulative reward rescaled with gamma
-        obs = self._obfilt(obs)
-        if self.ret_rms:
-            self.ret_rms.update(self.ret)
-            rews = np.clip(rews / np.sqrt(self.ret_rms.var + self.epsilon), - self.cliprew, self.cliprew)
+        # execute action
+        obs, rews, news, infos = self.venv.step_wait()
+        # update discounted return
+        self.ret = self.ret * self.gamma + rews
         self.ret[news] = 0.
+        # normalise
+        rews = self._rewfilt(rews)
         return obs, rews, news, infos
 
-    def _obfilt(self, obs, update=True):
-        if self.ob_rms:
-            if self.training and update:
-                self.ob_rms.update(obs)
-
-            obs = np.clip((obs - self.ob_rms.mean) /
-                          np.sqrt(self.ob_rms.var + self.epsilon),
-                          -self.clipob, self.clipob)
-            return obs
+    def _rewfilt(self, rews):
+        if self.normalize_rew:
+            # update rolling mean / std
+            if self.training:
+                self.ret_rms.update(self.ret)
+            # normalise
+            rews_norm = np.clip(rews / np.sqrt(self.ret_rms.var + self.epsilon), -self.cliprew, self.cliprew)
+            return [rews, rews_norm]
         else:
-            return obs
+            return [rews, rews]
 
     def train(self):
         self.training = True
