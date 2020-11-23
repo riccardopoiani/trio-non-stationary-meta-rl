@@ -3,7 +3,7 @@ import argparse
 import torch
 
 """
-taskset -c 0-43 python3.5 train_cheetah_vel.py --algo rl2   --folder rl2huber --training-iter 15800 --gamma 0.995 --num-processes 16 --num-test-processes 1 --hidden-size 128 --ppo-lr 0.0007 --ppo-eps 1e-8 --ppo-epoch 2 --num-mini-batch 4 --use-elu 0 --num-steps 400 --clip-param 0.1 --decay-kld-rate 1 --eval-interval 100 --num-random-task-to-eval 32 --entropy-coef 0.01 --use-proper-time-limits 1 --use-gae 1 --gae_lambda 0.95 --use-rms-obs 0 --task-len 1 --use-done 0 --use-feature-extractor 1 --rl2-reward-emb-dim 16 --rl2-action-emb-dim 16 --rl2-state-emb-dim 32 --use-rms-rew 1 --use-rms-obs 0 --use-rms-act 0 --use-rms-rew-in-policy 0  --use-huber-loss 1 --seed 
+Arguments are equal to ant_goal_bayes_arguments so far
 """
 
 
@@ -14,14 +14,14 @@ def get_args(rest_args):
     parser.add_argument('--gamma', default=0.995, type=float, help="RL discount factor")
 
     # PPO-parameters
-    parser.add_argument('--num-steps', type=int, default=400, help="number of steps before updating")
+    parser.add_argument('--num-steps', type=int, default=200, help="number of steps before updating")
     parser.add_argument('--ppo-epoch', type=int, default=2, help="number of ppo epochs during update")
     parser.add_argument('--clip-param', type=float, default=0.1, help="clip parameters for ppo")
-    parser.add_argument('--num-mini-batch', type=int, default=4, help="number of mini batches for ppo")
+    parser.add_argument('--num-mini-batch', type=int, default=1, help="number of mini batches for ppo")
     parser.add_argument('--value-loss-coef', default=0.5, type=float, help="value loss coefficient for ppo")
     parser.add_argument('--entropy-coef', default=0.01, type=float, help="entropy coefficient for ppo")
     parser.add_argument('--max-grad-norm', default=0.5, type=float, help="maximum gradient norm in ppo updates")
-    parser.add_argument('--ppo-lr', default=0.0007, type=float, help="ppo learning rate")
+    parser.add_argument('--ppo-lr', default=0.0005, type=float, help="ppo learning rate")
     parser.add_argument('--ppo-eps', default=1e-8, type=float, help="epsilon param for adam optimizer in ppo")
     parser.add_argument('--recurrent', default=False, type=lambda x: int(x) != 0,
                         help="if the policy in ppo is recurrent")
@@ -39,45 +39,52 @@ def get_args(rest_args):
     parser.add_argument('--use-xavier', default=False, type=lambda x: int(x) != 0,
                         help="true if xavier init will be used in policy, false if orthogonal init will be used")
     parser.add_argument('--use-feature-extractor', default=True, type=lambda x: int(x) != 0)
-    parser.add_argument('--state-extractor-dim', default=None, type=int)
-    parser.add_argument('--latent-extractor-dim', default=None, type=int)
-    parser.add_argument('--uncertainty-extractor-dim', default=None, type=int)
+    parser.add_argument('--state-extractor-dim', default=80, type=int)
+    parser.add_argument('--latent-extractor-dim', default=46, type=int)
+    parser.add_argument('--uncertainty-extractor-dim', default=2, type=int)
     parser.add_argument('--use-huber-loss', default=True, type=lambda x: int(x) != 0,
                         help="True if Huber loss should be used in RL training")
 
-    parser.add_argument('--use-rms-obs', type=lambda x: int(x) != 0, default=False,
+    parser.add_argument('--use-rms-obs', type=lambda x: int(x) != 0, default=True,
                         help="True if states should be smoothed when fed to the policy")
-    parser.add_argument('--use-rms-latent', type=lambda x: int(x) != 0, default=False,
+    parser.add_argument('--use-rms-latent', type=lambda x: int(x) != 0, default=True,
                         help="True if latent space shuold be smoothed when fed to the policy")
     parser.add_argument('--decouple-rms-latent', type=lambda x: int(x) != 0, default=False,
                         help="True if 2 different smoothers should be used "
                              "to smooth mean and variance of the latent space (only for ours algo)")
     parser.add_argument('--use-rms-rew', type=lambda x: int(x) != 0, default=True,
                         help="True if rewards should be smoothed in RL training")
-    parser.add_argument('--use-rms-act', type=lambda x: int(x) != 0, default=False,
-                        help="True if actions should be smoothed when fed to the Policy (only for RL2)")
-
-    # RL2
-    parser.add_argument('--rl2-state-emb-dim', type=int, default=32,
-                        help="RL2 state embedding dimension")
-    parser.add_argument('--rl2-action-emb-dim', type=int, default=16,
-                        help="RL2 action embedding dimension")
-    parser.add_argument('--rl2-reward-emb-dim', type=int, default=16,
-                        help="RL2 reward embedding dimension")
-    parser.add_argument('--rl2-done-emb-dim', type=int, default=None,
-                        help="RL done embedding dimension")
-    parser.add_argument('--use-done', type=lambda x: int(x) != 0, default=False,
-                        help="True if RL2 policy should be conditioned on the done signal")
-    parser.add_argument('--use-rms-rew-in-policy', type=lambda x: int(x) != 0, default=False,
-                        help="True if reward should be smoothed when fed to the policy (RL2 only)")
-    parser.add_argument('--rl2-latent-dim', type=int, default=None)
 
     # GP parameters
     parser.add_argument('--n-restarts-gp', default=10, type=int, help="number of restarts for GP at meta-test time")
     parser.add_argument('--sw-size', default=10000, type=int, help="GP will use only the last sw number of samples")
 
+    # Variational inference
+    parser.add_argument('--init-vae-steps', default=7500, type=int, help="initial number of inference training step")
+    parser.add_argument('--vae-smart', type=lambda x: int(x) != 0, default=True,
+                        help="True if samples collected using bad priors will be used to train the network")
+    parser.add_argument('--vae-lr', type=float, default=1e-3, help="learning rate used to train VAE network")
+    parser.add_argument('--use-decay-kld', type=lambda x: int(x) != 0, default=True,
+                        help="whether to make the KLD loss decay as more samples are used to produce the inference")
+    parser.add_argument('--decay-kld-rate', type=float, default=0.1,
+                        help="decay parameter of the KLD loss used in inference training")
+    parser.add_argument('--vae-max-steps', type=int, default=None,
+                        help="Maximum number of steps per batch that will be used to train VAE")
+    parser.add_argument('--vae-state-emb-dim', type=int, default=64,
+                        help="Dimension of the embedding layer concerning the state in VAE network")
+    parser.add_argument('--vae-action-emb-dim', type=int, default=32,
+                        help="Dimension of the embedding layer concerning the action in VAE network")
+    parser.add_argument('--vae-reward-emb-dim', type=int, default=32,
+                        help="Dimension of the embedding layer concerning the reward in VAE network")
+    parser.add_argument('--vae-prior-emb-dim', type=int, default=2,
+                        help="Dimension of the embedding layer concerning the prior in VAE network")
+    parser.add_argument('--vae-gru-dim', type=int, default=128, help="Number of units in the GRU dim. of VAE network")
+    parser.add_argument('--detach-every', type=int, default=50, help="Break VAE back-propagation through time"
+                                                                     "after this number steps. If None, "
+                                                                     "back-propagation won't be truncated")
+
     # General settings
-    parser.add_argument('--training-iter', default=15800, type=int, help="number of training iterations")
+    parser.add_argument('--training-iter', default=31250, type=int, help="number of training iterations")
     parser.add_argument('--eval-interval', type=int, default=100, help="evaluate agent every x iteration")
     parser.add_argument('--log-dir', type=str, default=".")
     parser.add_argument('--num-random-task-to-eval', type=int, default=32, help="number of random task to evalute")
@@ -95,6 +102,10 @@ def get_args(rest_args):
                         help="sets flags for determinism when using CUDA (potentially slow!)")
 
     args = parser.parse_args(rest_args)
+
     args.cuda = not args.no_cuda and torch.cuda.is_available()
+
+    if args.vae_max_steps is None:
+        args.vae_max_steps = args.num_steps
 
     return args

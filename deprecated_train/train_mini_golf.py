@@ -1,44 +1,15 @@
 import pickle
 
 import torch
-import numpy as np
 import gym_sin
 from gym import spaces
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
-
-from inference.inference_network import InferenceNetwork, EmbeddingInferenceNetwork
+from inference.inference_network import InferenceNetwork
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
 from task.mini_golf_task_generator import MiniGolfTaskGenerator
 from utilities.arguments import get_args
 from utilities.folder_management import handle_folder_creation
-
-
-def get_sin_task_sequence(n_restarts, num_test_processes, std):
-    kernel = C(1.0, (1e-8, 1e8)) * RBF(1, (1e-8, 1e8))
-
-    gp_list = []
-    for i in range(num_test_processes):
-        gp_list.append([GaussianProcessRegressor(kernel=kernel,
-                                                 normalize_y=False,
-                                                 n_restarts_optimizer=n_restarts)
-                        for _ in range(num_test_processes)])
-
-    f = 0.05
-    offset = -0.7
-    a = -0.2
-
-    init_prior_test = [torch.tensor([[a * np.sin(0) + offset], [std ** 2]], dtype=torch.float32)
-                       for _ in range(num_test_processes)]
-
-    prior_seq = []
-    for idx in range(300):
-        friction = a * np.sin(f * idx) + offset
-        prior_seq.append(torch.tensor([[friction], [std ** 2]], dtype=torch.float32))
-
-    return gp_list, prior_seq, init_prior_test
 
 
 def get_sequences(n_restarts, num_test_processes, std):
@@ -192,22 +163,23 @@ def main():
                                     use_rms_rew=args.use_rms_rew
                                     )
 
-        vi_loss, eval_list, test_list, final_test = agent.train(n_train_iter=args.training_iter,
-                                                                init_vae_steps=args.init_vae_steps,
-                                                                eval_interval=args.eval_interval,
-                                                                task_generator=task_generator,
-                                                                env_name=env_name,
-                                                                seed=args.seed,
-                                                                log_dir=args.log_dir,
-                                                                verbose=args.verbose,
-                                                                num_random_task_to_evaluate=args.num_random_task_to_eval,
-                                                                gp_list_sequences=gp_list_sequences,
-                                                                sw_size=args.sw_size,
-                                                                prior_sequences=prior_sequences,
-                                                                init_prior_sequences=init_prior,
-                                                                num_eval_processes=args.num_test_processes,
-                                                                vae_smart=args.vae_smart,
-                                                                task_len=args.task_len)
+        vi_loss, eval_list, test_list, final_test, eval_opt = agent.train(n_train_iter=args.training_iter,
+                                                                          init_vae_steps=args.init_vae_steps,
+                                                                          eval_interval=args.eval_interval,
+                                                                          task_generator=task_generator,
+                                                                          env_name=env_name,
+                                                                          seed=args.seed,
+                                                                          log_dir=args.log_dir,
+                                                                          verbose=args.verbose,
+                                                                          num_random_task_to_evaluate=args.num_random_task_to_eval,
+                                                                          gp_list_sequences=gp_list_sequences,
+                                                                          sw_size=args.sw_size,
+                                                                          prior_sequences=prior_sequences,
+                                                                          init_prior_sequences=init_prior,
+                                                                          num_eval_processes=args.num_test_processes,
+                                                                          vae_smart=args.vae_smart,
+                                                                          task_len=args.task_len,
+                                                                          is_eval_optimal=True)
         with open("{}vae.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(vi_loss, output)
         with open("{}eval.pkl".format(folder_path_with_date), "wb") as output:
@@ -216,6 +188,8 @@ def main():
             pickle.dump(test_list, output)
         with open("{}final_test.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(final_test, output)
+        with open("{}eval_opt.pkl".format(folder_path_with_date), "wb") as output:
+            pickle.dump(eval_opt, output)
 
         torch.save(agent.vi, "{}agent_vi".format(folder_path_with_date))
         torch.save(agent.actor_critic, "{}agent_ac".format(folder_path_with_date))

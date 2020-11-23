@@ -118,7 +118,4 @@ def get_args(rest_args):
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
-    if args.vae_max_steps is None:
-        args.vae_max_steps = args.num_steps
-
     return args

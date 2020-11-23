@@ -8,12 +8,13 @@ from gym import spaces
 
 from configs import cheetah_bayes_arguments, cheetah_rl2_arguments, cheetah_ts_arguments, \
     gauss_bayes_arguments, gauss_rl2_arguments, gauss_ts_arguments, golf_bayes_arguments, golf_rl2_arguments, \
-    golf_ts_arguments, ant_goal_bayes_arguments, ant_goal_rl2_arguments, ant_goal_ts_arguments
+    golf_ts_arguments, ant_goal_bayes_arguments, ant_goal_rl2_arguments, ant_goal_ts_arguments, ant_goal_with_signal_bayes
 
 from inference.inference_network import EmbeddingInferenceNetwork
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
+from task.ant_goal_ws_task_generator import AntGoalWithSignalTaskGenerator
 from task.cheetah_vel_task_generator import CheetahVelTaskGenerator
 from task.mini_golf_task_generator import MiniGolfTaskGenerator
 from task.ant_goal_task_generator import AntGoalTaskGenerator
@@ -63,6 +64,11 @@ def main():
             args = ant_goal_bayes_arguments.get_args(rest_args)
         elif algo == "ts":
             args = ant_goal_ts_arguments.get_args(rest_args)
+    elif env == 'ant_goal_with_signal':
+        if algo == "ours":
+            args = ant_goal_with_signal_bayes.get_args(rest_args)
+        else:
+            raise NotImplemented()
 
     # Retrieve environment settings
     if env == "cheetal_vel":
@@ -97,6 +103,22 @@ def main():
         prior_std_min = [prior_var_min ** (1 / 2) for _ in range(latent_dim)]
         task_generator = AntGoalTaskGenerator(prior_var_min=prior_var_min,
                                               prior_var_max=prior_var_max)
+    elif env == "ant_goal_with_signal":
+        use_env_obs = True
+        folder = "result/antgoalsignal/"
+        env_name = "antgoalsignal-v0"
+        prior_var_min = 0.1
+        prior_var_max = 0.4
+        latent_dim = 4
+        state_dim = 114
+        action_dim = 8
+        high_act = np.ones(8, dtype=np.float32)
+        low_act = -np.ones(8, dtype=np.float32)
+        action_space = spaces.Box(low=low_act, high=high_act)
+        prior_std_max = [prior_var_max ** (1/2) for _ in range(latent_dim)]
+        prior_std_min = [prior_var_min ** (1/2) for _ in range(latent_dim)]
+        task_generator = AntGoalWithSignalTaskGenerator(prior_var_max=prior_var_max,
+                                                        prior_var_min=prior_var_min)
     elif env == "golf":
         folder = "result/minigolfv0/"
         env_name = "minigolf-v0"

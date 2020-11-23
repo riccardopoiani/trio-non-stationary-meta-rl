@@ -19,10 +19,10 @@ from utilities.test_arguments import get_test_args
 
 # General parameters
 folder = "result/metatest/minigolf/"
-env_name = "minigolf-v0"
+env_name = "golf-v0"
 folder_list = ["result/golf/ours/",
                "result/golf/tsopt/",
-               "result/golf/rl2low/"]
+               "result/golf/rl2maystable/"]
 algo_list = ['ours', 'ts_opt', 'rl2']
 label_list = ['ours', 'ts_opt', 'rl2']
 latent_dim = 1

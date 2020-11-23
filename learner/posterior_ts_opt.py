@@ -212,7 +212,11 @@ class PosteriorOptTSAgent:
 
             vi_loss.append(loss)
 
-            self.train_multi_task_iter(task_generator, env_name, seed, log_dir)
+            # self.train_multi_task_iter(task_generator, env_name, seed, log_dir)
+            self.train_multi_task_iter_with_posterior(task_generator=task_generator,
+                                                      env_name=env_name,
+                                                      seed=seed,
+                                                      log_dir=log_dir)
 
             if i % eval_interval == 0:
                 print("Iteration {} / {}".format(i, n_train_iter))
@@ -255,6 +259,67 @@ class PosteriorOptTSAgent:
             return vi_loss, eval_list, test_list, final_meta_test
         else:
             return vi_loss, eval_list, test_list, final_meta_test, eval_opt
+
+    def train_multi_task_iter_with_posterior(self, task_generator, env_name, seed, log_dir):
+        env_kwargs, _, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)
+        self.envs = get_vec_envs_multi_task(env_name=env_name,
+                                            seed=seed,
+                                            num_processes=self.num_processes,
+                                            gamma=self.gamma,
+                                            log_dir=log_dir,
+                                            device=self.device,
+                                            allow_early_resets=True,
+                                            env_kwargs_list=env_kwargs,
+                                            normalize_rew=self.use_rms_rew,
+                                            envs=self.envs,
+                                            num_frame_stack=None)
+
+        obs = self.envs.reset()
+        obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=prior_list,
+                                  is_prior=True, use_env_obs=self.use_env_obs)
+
+        rollouts_multi_task = RolloutStorage(self.num_steps, self.num_processes,
+                                             self.obs_shape, self.action_space,
+                                             self.actor_critic.recurrent_hidden_state_size)
+
+        rollouts_multi_task.obs[0].copy_(obs)
+        rollouts_multi_task.to(self.device)
+
+        for step in range(self.num_steps):
+            use_prev_state = True if step > 0 else False
+
+            # Sample actions
+            with torch.no_grad():
+                value, action, action_log_prob, recurrent_hidden_states = self.actor_critic.act(
+                    rollouts_multi_task.obs[step], rollouts_multi_task.recurrent_hidden_states[step],
+                    rollouts_multi_task.masks[step])
+
+            # Observe reward and next obs
+            obs, (reward, reward_norm), done, infos = self.envs.step(action)
+            posterior = get_posterior(vi=self.vi, action=action, reward=reward, prior=prior_list,
+                                      use_prev_state=use_prev_state,
+                                      use_env_obs=self.use_env_obs, env_obs=obs)
+
+            obs = augment_obs_optimal(obs=obs, latent_dim=self.latent_dim, posterior=posterior,
+                                      use_env_obs=self.use_env_obs, is_prior=False)
+
+            # If done then clean the history of observations.
+            masks = torch.FloatTensor([[0.0] if done_ else [1.0] for done_ in done])
+            bad_masks = torch.FloatTensor([[0.0] if 'bad_transition' in info.keys() else [1.0] for info in infos])
+            rollouts_multi_task.insert(obs, recurrent_hidden_states, action,
+                                       action_log_prob, value, reward_norm, masks, bad_masks)
+
+        with torch.no_grad():
+            next_value = self.actor_critic.get_value(
+                rollouts_multi_task.obs[-1], rollouts_multi_task.recurrent_hidden_states[-1],
+                rollouts_multi_task.masks[-1]).detach()
+
+        rollouts_multi_task.compute_returns(next_value, self.use_gae, self.gamma,
+                                            self.gae_lambda, self.use_proper_time_limits)
+
+        self.agent.update(rollouts_multi_task)
+
+        rollouts_multi_task.after_update()
 
     def train_multi_task_iter(self, task_generator, env_name, seed, log_dir):
         envs_kwargs, _, prior_list, new_tasks = task_generator.sample_pair_tasks(self.num_processes)

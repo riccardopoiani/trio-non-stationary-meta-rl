@@ -19,13 +19,19 @@ from utilities.test_arguments import get_test_args
 
 folder = "result/metatest/scalegauss/"
 env_name = "scalegauss-v0"
-folder_list = ["result/gauss/oursfin/",
-               "result/gauss/tsoptfin/",
-               "result/gauss/rl2newarch/"]
-algo_list = ['ours', 'ts_opt', 'rl2']
-label_list = ['ours', 'ts_opt', 'rl2']
-has_track_list = [True, True, False]
-store_history_list = [True, True, False]
+# folder_list = ["result/gauss/oursfin/",
+#               "result/gauss/tsoptfin/",
+#               "result/gauss/rl2newarch/"]
+# algo_list = ['ours', 'ts_opt', 'rl2']
+# label_list = ['ours', 'ts_opt', 'rl2']
+# has_track_list = [True, True, False]
+# store_history_list = [True, True, False]
+folder_list = ["result/gaussnoscale/oursnew"]
+algo_list = ["ours"]
+label_list = ["ours"]
+has_track_list = [True]
+store_history_list = [True]
+
 prior_var_min = 0.001
 prior_var_max = 1
 noise_seq_var = 0.001
@@ -38,7 +44,6 @@ use_env_obs = False
 action_space = spaces.Box(low=min_action,
                           high=max_action,
                           shape=(1,))
-
 
 num_seq = 4
 seq_len_list = [15, 20, 30, 40]
@@ -234,12 +239,12 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                           vae_optim=None,
                           vae_min_seq=1,
                           vae_max_seq=algo_args.vae_max_steps,
-                          max_sigma=[prior_var_max ** (1/2)],
+                          max_sigma=[prior_var_max ** (1 / 2)],
                           use_decay_kld=algo_args.use_decay_kld,
                           decay_kld_rate=algo_args.decay_kld_rate,
                           env_dim=state_dim,
                           action_dim=action_dim,
-                          min_sigma=[prior_var_min ** (1/2)],
+                          min_sigma=[prior_var_min ** (1 / 2)],
                           use_xavier=algo_args.use_xavier,
                           use_rms_obs=algo_args.use_rms_obs,
                           use_rms_latent=algo_args.use_rms_latent,
@@ -425,7 +430,6 @@ if args.dump_data:
     with open("{}data_results.pkl".format(folder_path_with_date), "wb") as output:
         pickle.dump(meta_test_res, output)
 
-
 create_csv_rewards(r_list=meta_test_res,
                    label_list=['Ours', 'TS', 'RL'],
                    has_track_list=[True, True, False],
@@ -446,6 +450,5 @@ create_csv_tracking(r_list=meta_test_res,
                     init_priors=init_prior,
                     rescale_latent=[-0.8, 0.8],
                     num_dim=latent_dim)
-
 
 fd.close()

@@ -14,14 +14,16 @@ class ScaledGaussEnv(gym.Env):
         super(ScaledGaussEnv, self).__init__()
 
         # Env. parameters
-        self.mean = ((0.8 - (-0.8))/(1 - (-1))) * (mean - 1) + 0.8
+        #self.mean = ((0.8 - (-0.8))/(1 - (-1))) * (mean - 1) + 0.8
+        self.mean = mean
         self.state = 0  # There is a single state
 
         self.action_space = spaces.Box(low=-1., high=1., shape=(1,), dtype="float32")
         self.observation_space = spaces.Box(low=np.array([0]), high=np.array([0]))
 
     def set_latent(self, mean):
-        self.mean = ((0.8 - (-0.8))/(1 - (-1))) * (mean - 1) + 0.8
+        # self.mean = ((0.8 - (-0.8))/(1 - (-1))) * (mean - 1) + 0.8
+        self.mean = mean
 
     def reset(self):
         self.state = 0

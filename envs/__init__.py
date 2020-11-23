@@ -19,8 +19,14 @@ register(
 )
 
 register(
-    'cheetahvel-v0',
-    entry_point="envs.cheetahvel.HalfCheetahVel",
+    'cheetahvel-v2',
+    entry_point="envs.cheetah_vel_v2:HalfCheetahVelEnvV2",
+    max_episode_steps=200
+)
+
+register(
+    'antgoalsignal-v0',
+    entry_point='envs.ant_goal_with_signals_states:AntGoalWithSignal',
     max_episode_steps=200
 )
 

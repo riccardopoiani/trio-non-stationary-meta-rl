@@ -22,7 +22,7 @@ warnings.filterwarnings(action='ignore')
 
 folder = "result/metatest/antgoal/"
 env_name = "antgoal-v0"
-folder_list = ["result/antgoal/ours/", "result/antgoal/rl2/", "result/antgoal/ts/"]
+folder_list = ["result/antgoal/ours300/", "result/antgoal/rl2/", "result/antgoal/tsvae/"]
 algo_list = ['ours', 'rl2', 'ts_opt']
 label_list = ['ours', 'rl2', 'ts_opt']
 has_track_list = [True, False, True]

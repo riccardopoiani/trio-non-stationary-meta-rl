@@ -30,7 +30,7 @@ prior_var_max = 0.3
 noise_seq_var = 0.00001
 latent_dim = 1
 state_dim = 20
-action_dim = 1
+action_dim = 6
 use_env_obs = True
 high_act = np.ones(6, dtype=np.float32)
 low_act = -np.ones(6, dtype=np.float32)
@@ -209,7 +209,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                           use_gae=algo_args.use_gae,
                           gae_lambda=algo_args.gae_lambda,
                           use_proper_time_limits=algo_args.use_proper_time_limits,
-                          obs_shape=(22,),
+                          obs_shape=(2 * latent_dim + state_dim,),
                           latent_dim=latent_dim,
                           recurrent_policy=algo_args.recurrent,
                           hidden_size=algo_args.hidden_size,
