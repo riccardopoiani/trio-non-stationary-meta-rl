@@ -135,14 +135,24 @@ def create_csv_tracking(r_list, label_list, has_track_list, num_seq, prior_seqs,
                     std_data[idx] = t2
                     idx += 1
 
-            num_t = len(prior_seqs[seq])
-            true_task_mean = np.array([prior_seqs[seq][i][0].item() for i in range(num_t)])
-            if rescale_latent is not None:
-                true_task_mean = ((rescale_latent[1] - rescale_latent[0]) / (1 - (-1))) * (true_task_mean - 1) + \
-                                 rescale_latent[1]
-            true_task_std = np.array([prior_seqs[seq][i][1].item() ** (1 / 2) for i in range(num_t)])
-            mean_data[idx] = true_task_mean
-            std_data[idx] = true_task_std
+            if num_dim == 1:
+                num_t = len(prior_seqs[seq])
+                true_task_mean = np.array([prior_seqs[seq][i][0].item() for i in range(num_t)])
+                if rescale_latent is not None:
+                    true_task_mean = ((rescale_latent[1] - rescale_latent[0]) / (1 - (-1))) * (true_task_mean - 1) + \
+                                     rescale_latent[1]
+                true_task_std = np.array([prior_seqs[seq][i][1].item() ** (1 / 2) for i in range(num_t)])
+                mean_data[idx] = true_task_mean
+                std_data[idx] = true_task_std
+            else:
+                num_t = len(prior_seqs[seq])
+                true_task_mean = np.array([prior_seqs[seq][i][0][d].item() for i in range(num_t)])
+                if rescale_latent is not None:
+                    true_task_mean = ((rescale_latent[1] - rescale_latent[0]) / (1 - (-1))) * (true_task_mean - 1) + \
+                                     rescale_latent[1]
+                true_task_std = np.array([prior_seqs[seq][i][1][d].item() ** (1 / 2) for i in range(num_t)])
+                mean_data[idx] = true_task_mean
+                std_data[idx] = true_task_std
 
             mean_df = pd.DataFrame(mean_data.transpose())
             std_df = pd.DataFrame(std_data.transpose())
@@ -172,6 +182,7 @@ def create_csv_tracking(r_list, label_list, has_track_list, num_seq, prior_seqs,
             total_df = mean_df.merge(std_df, left_on="task", right_on="task")
             total_df.to_csv("{}{}_tracking_dim_{}.csv".format(folder_path_with_date, sequence_name_list[seq], d),
                             index=False)
+
 
 def create_csv_rewards(r_list, label_list, has_track_list, num_seq, prior_seqs, seq_len_list, sequence_name_list,
                        folder_path_with_date):

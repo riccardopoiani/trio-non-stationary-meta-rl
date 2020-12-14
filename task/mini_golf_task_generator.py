@@ -24,14 +24,14 @@ class MiniGolfTaskGenerator(TaskGenerator):
     def sample_task_from_prior(self, prior):
         ok = True
 
-        while ok:
-            mu = prior[0].clone().detach()
-            var = prior[1].clone().detach()
+        # while ok:
+        mu = prior[0].clone().detach()
+        var = prior[1].clone().detach()
 
-            task_param = torch.normal(mu, var.sqrt())
+        task_param = torch.normal(mu, var.sqrt())
 
-            if self.max_friction > task_param.item() > self.min_friction:
-                ok = False
+            # if self.max_friction > task_param.item() > self.min_friction:
+            #    ok = False
 
         envs_kwargs = {'friction': task_param.item()}
 

@@ -1,0 +1,42 @@
+mean_reward_true_sigma_Ours,\
+mean_reward_true_prior_Ours,\
+mean_reward_no_tracking_Ours,\
+mean_reward_true_sigma_TS,\
+mean_reward_true_prior_TS,\
+mean_reward_no_tracking_TS,\
+mean_reward_RL,\
+task,\
+std_reward_true_sigma_Ours,\
+std_reward_true_prior_Ours,\
+std_reward_no_tracking_Ours,\
+std_reward_true_sigma_TS,\
+std_reward_true_prior_TS,\
+std_reward_no_tracking_TS,\
+std_reward_RL,\
+mean_reward_maml_step_0,\
+std_reward_maml_step_0
+
+MAML -> Green
+RL2 -> Black
+Ours True Prior -> Pink
+Ours -> red
+Ours no tracking -> Brown
+TS -> BLue
+TS true prior -> Cyan
+TS no tracking -> violet
+############################################################################################################################################################################################################################################################
+posterior_true_mean_Ours -> Pink
+prediction_true_mean_Ours -> Red
+posterior_true_mean_TS, -> CYAN
+prediction_true_mean_TS, -> BLUE
+true_task_mean, -> Black
+5_x,
+6_x,
+task,
+posterior_true_std_Ours,
+prediction_true_std_Ours,
+posterior_true_std_TS,
+prediction_true_std_TS,
+true_task_std,
+5_y,
+6_y

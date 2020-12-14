@@ -316,7 +316,7 @@ class OursAgent:
 
         # Sample data under the current policy
         obs = self.envs.reset()
-        
+
         obs = augment_obs_posterior(obs=obs, latent_dim=self.latent_dim, posterior=prior_policy,
                                     use_env_obs=use_env_obs, is_prior=True)
 
@@ -411,7 +411,7 @@ class OursAgent:
 
         # Sample data under the current policy
         obs = self.envs.reset()
-        
+
         obs = augment_obs_posterior(obs=obs, latent_dim=self.latent_dim, posterior=prior, use_env_obs=use_env_obs,
                                     is_prior=True)
 
@@ -478,7 +478,7 @@ class OursAgent:
     def multi_task_policy_step(self, prior, use_env_obs):
         # Multi-task learning with posterior mean
         obs = self.envs.reset()
-        
+
         obs = augment_obs_posterior(obs=obs, latent_dim=self.latent_dim, posterior=prior,
                                     use_env_obs=use_env_obs, is_prior=True)
 
@@ -550,7 +550,7 @@ class OursAgent:
             eval_episode_rewards = []
 
             obs = self.eval_envs.reset()
-            
+
             obs = augment_obs_posterior(obs=obs, latent_dim=self.latent_dim, posterior=prior,
                                         use_env_obs=use_env_obs, is_prior=True)
 
@@ -672,8 +672,6 @@ class OursAgent:
         prior = init_prior
         posterior_history = torch.empty(num_tasks, num_eval_processes, 2 * self.latent_dim)
 
-        predicted_sigmas = []
-
         for t, kwargs in enumerate(envs_kwargs_list):
             use_prev_state = False
             task_r = []
@@ -691,7 +689,7 @@ class OursAgent:
                                                          normalize_rew=self.use_rms_rew,
                                                          num_frame_stack=None)
                 obs = self.eval_envs.reset()
-                
+
                 if not use_prev_state:
                     obs = augment_obs_posterior(obs=obs, latent_dim=self.latent_dim, posterior=prior,
                                                 use_env_obs=use_env_obs, is_prior=True)
@@ -756,6 +754,8 @@ class OursAgent:
                             gp_list[dim][proc].fit(x,
                                                    np.atleast_2d(posterior_history[0:t + 1, proc, dim].numpy()).T)
 
+
+
                 prior = []
                 curr_pred_all = [[] for _ in range(self.latent_dim)]
                 for proc in range(num_eval_processes):
@@ -764,7 +764,7 @@ class OursAgent:
                     for dim in range(self.latent_dim):
                         x_points = np.atleast_2d(np.array([t + 1])).T
                         y_pred, sigma = gp_list[dim][proc].predict(x_points, return_std=True)
-                        prior_proc[0, dim] = np.clip(y_pred[0, 0], -1, 1)
+                        prior_proc[0, dim] = y_pred[0, 0]
                         if use_true_sigma:
                             if self.min_sigma[dim] > sigma[0]:
                                 prior_proc[1, dim] = self.min_sigma[dim] ** 2
@@ -772,12 +772,11 @@ class OursAgent:
                                 prior_proc[1, dim] = self.max_sigma[dim] ** 2
                             else:
                                 prior_proc[1, dim] = sigma[0] ** 2
-                            predicted_sigmas.append(prior_proc[1, dim].item())
-
                         else:
                             prior_proc[1, dim] = self.max_sigma[dim] ** 2
                         curr_pred_all[dim].append(y_pred[0][0])
                     prior.append(prior_proc)
+
                 curr_pred_all = np.array(curr_pred_all)
                 prediction_mean.append(np.mean(curr_pred_all, 1))
 

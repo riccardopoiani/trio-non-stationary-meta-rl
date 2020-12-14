@@ -212,11 +212,11 @@ class PosteriorOptTSAgent:
 
             vi_loss.append(loss)
 
-            # self.train_multi_task_iter(task_generator, env_name, seed, log_dir)
-            self.train_multi_task_iter_with_posterior(task_generator=task_generator,
-                                                      env_name=env_name,
-                                                      seed=seed,
-                                                      log_dir=log_dir)
+            self.train_multi_task_iter(task_generator, env_name, seed, log_dir)
+            # self.train_multi_task_iter_with_posterior(task_generator=task_generator,
+            #                                          env_name=env_name,
+            #                                          seed=seed,
+            #                                          log_dir=log_dir)
 
             if i % eval_interval == 0:
                 print("Iteration {} / {}".format(i, n_train_iter))
@@ -838,6 +838,7 @@ class PosteriorOptTSAgent:
                 curr_pred_all = [[] for _ in range(self.latent_dim)]
                 for proc in range(num_eval_processes):
                     prior_proc = torch.empty(2, self.latent_dim)
+
                     for dim in range(self.latent_dim):
                         x_points = np.atleast_2d(np.array([t + 1])).T
                         y_pred, sigma = gp_list[dim][proc].predict(x_points, return_std=True)
@@ -845,6 +846,8 @@ class PosteriorOptTSAgent:
                         if use_true_sigma:
                             if self.min_sigma[dim] > sigma[0]:
                                 prior_proc[1, dim] = self.min_sigma[dim] ** 2
+                            elif self.max_sigma[dim] < sigma[0]:
+                                prior_proc[1, dim] = self.max_sigma[dim] ** 2
                             else:
                                 prior_proc[1, dim] = sigma[0] ** 2
                         else:
@@ -854,4 +857,5 @@ class PosteriorOptTSAgent:
 
                 curr_pred_all = np.array(curr_pred_all)
                 prediction_mean.append(np.mean(curr_pred_all, 1))
+
         return eval_episode_rewards, posterior_history, prediction_mean

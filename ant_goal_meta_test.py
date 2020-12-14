@@ -13,7 +13,7 @@ from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
 from task.ant_goal_task_generator import AntGoalTaskGenerator
 from utilities.folder_management import handle_folder_creation
-from utilities.plots.plots import view_results_multiple_dim, create_csv_rewards, create_csv_tracking, view_results_multiple_dim
+from utilities.plots.plots import create_csv_rewards, create_csv_tracking, view_results_multiple_dim
 from utilities.test_arguments import get_test_args
 
 import warnings

@@ -195,6 +195,7 @@ class RL2:
             action = torch.zeros(num_processes, self.action_dim)
         else:
             done = torch.FloatTensor([[1.0] if _done else [0.0] for _done in done])
+            action = action.float()
 
         if use_obs_env:
             if self.use_done:

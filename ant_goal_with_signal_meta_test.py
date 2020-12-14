@@ -2,64 +2,71 @@ import numpy as np
 import torch
 import os
 import envs
+import pickle
 from gym import spaces
 from joblib import Parallel, delayed
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel, DotProduct
 
-from configs import golf_ts_arguments, golf_bayes_arguments, golf_rl2_arguments
+from configs import ant_goal_with_signal_bayes, ant_goal_with_signal_rl2, ant_goal_with_signal_ts
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
-from task.mini_golf_task_generator import MiniGolfTaskGenerator
+from task.ant_goal_ws_task_generator import AntGoalWithSignalTaskGenerator
 from utilities.folder_management import handle_folder_creation
-from utilities.plots.plots import create_csv_rewards, create_csv_tracking, view_results_multiple_dim
+from utilities.plots.plots import create_csv_rewards, create_csv_tracking
 from utilities.test_arguments import get_test_args
 
+import warnings
 
-# General parameters
-folder = "result/metatest/minigolf/"
-env_name = "golf-v0"
-folder_list = ["result/golf/oursnewnew/",
-               "result/golf/tsoptnewnew/",
-               "result/golf/rl2maystable/"]
-algo_list = ['ours', 'ts_opt', 'rl2']
-label_list = ['ours', 'ts_opt', 'rl2']
-latent_dim = 1
-action_dim = 1
-state_dim = 1
+warnings.filterwarnings(action='ignore')
+
+folder = "result/metatest/antgoalwithsignalv0/"
+env_name = "antgoalsignal-v0"
+folder_list = ["result/antgoalsignal/ours/", "result/antgoalsignal/rl2/", "result/antgoalsignal/ts/"]
+algo_list = ['ours', 'rl2', 'ts_opt']
+label_list = ['ours', 'rl2', 'ts_opt']
+has_track_list = [True, False, True]
+store_history_list = [True, False, True]
+
+# Task family parameters
+prior_var_min = 0.1
+prior_var_max = 0.4
+latent_dim = 4
 use_env_obs = True
-has_track_list = [True, True, False]
-store_history_list = [True, True, False]
-prior_var_min = 0.001
-prior_var_max = 0.2
-noise_seq_var = 0.001
-min_action = 1e-5
-max_action = 10.
-action_space = spaces.Box(low=min_action,
-                          high=max_action,
-                          shape=(1,))
+state_dim = 114
+action_dim = 8
+noise_seq_var = 0.01
+high_act = np.ones(8, dtype=np.float32)
+low_act = -np.ones(8, dtype=np.float32)
+action_space = spaces.Box(low=low_act, high=high_act)
+prior_std_max = [prior_var_max ** (1 / 2) for _ in range(latent_dim)]
+prior_std_min = [prior_var_min ** (1 / 2) for _ in range(latent_dim)]
 
 num_seq = 3
-seq_len_list = [100, 110, 10]
-sequence_name_list = ['sin', 'sawtooth', 'ood']
+seq_len_list = [20, 30, 40]
+sequence_name_list = ['circuit', 'constant', 'step']
 
 
-def f_sin(x, freq=0.1, offset=-0.7, a=-0.2):
-    t = a * np.sin(freq * x) + offset
-    return t
+def f_radius(theta, latent_dim):
+    if latent_dim == 0 or latent_dim == 2:
+        return np.cos(theta)
+    elif latent_dim == 1 or latent_dim == 3:
+        return np.sin(theta)
+    else:
+        print("Latent dim {} not valid".format(latent_dim))
+        raise NotImplemented()
 
 
-def f_sawtooth(x, period=50):
-    saw_tooth = 2 * (x / period - np.floor(0.5 + x / period))
-    saw_tooth = (-0.6 - (-1)) / (1 - (-1)) * (saw_tooth - 1) - 0.6
-    return saw_tooth
+def linear_theta(x):
+    return x * 2 * np.pi / 20
 
 
-def get_const_ood(n_restarts, num_test_processes, std):
+def get_circuit_sequences(n_restarts, num_test_processes, var_seq):
+    std = var_seq ** (1 / 2)
     kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
-
     gp_list = []
+
     for _ in range(latent_dim):
         curr_dim_list = []
         for _ in range(num_test_processes):
@@ -68,82 +75,142 @@ def get_const_ood(n_restarts, num_test_processes, std):
                                                           n_restarts_optimizer=n_restarts))
         gp_list.append(curr_dim_list)
 
-    f_const = 1.2
-
+    # Creating prior distribution
     p_mean = []
     p_var = []
     for dim in range(latent_dim):
-        p_mean.append(1.)
-        p_var.append(0.2 ** (1 / 2))
+        p_mean.append(f_radius(theta=0, latent_dim=dim))
+        p_var.append(std ** 2)
+
     init_prior_test = [torch.tensor([p_mean, p_var], dtype=torch.float32)
                        for _ in range(num_test_processes)]
 
+    # Create prior sequence
     prior_seq = []
-    for idx in range(0, 10):
+    for idx in range(20):
         p_mean = []
         p_var = []
-
+        theta = linear_theta(idx)
         for dim in range(latent_dim):
-            if dim == 0:
-                p_mean.append(f_const)
+            if dim <= 1:
+                p_mean.append(f_radius(theta=theta, latent_dim=dim))
+                p_var.append(std ** 2)
             else:
-                p_mean.append(np.random.uniform(low=-1, high=1))
-            p_var.append(std ** 2)
+                p_mean.append(f_radius(theta=-theta, latent_dim=dim))
+                p_var.append(std ** 2)
+        prior_seq.append(torch.tensor([p_mean, p_var], dtype=torch.float32))
+
+    return gp_list, prior_seq, init_prior_test
+
+
+def get_constant_sequence(n_restarts, num_test_processes, var_seq):
+    std = var_seq ** (1 / 2)
+    kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
+    gp_list = []
+
+    for _ in range(latent_dim):
+        curr_dim_list = []
+        for _ in range(num_test_processes):
+            curr_dim_list.append(GaussianProcessRegressor(kernel=kernel,
+                                                          normalize_y=False,
+                                                          n_restarts_optimizer=n_restarts))
+        gp_list.append(curr_dim_list)
+
+    # Creating prior distribution
+    theta_const = np.pi / 4
+    p_mean = []
+    p_var = []
+    for dim in range(latent_dim):
+        p_mean.append(f_radius(theta=theta_const, latent_dim=dim))
+        p_var.append(std ** 2)
+    init_prior_test = [torch.tensor([p_mean, p_var], dtype=torch.float32)
+                       for _ in range(num_test_processes)]
+
+    # Create prior sequence
+    prior_seq = []
+    for idx in range(30):
+        p_mean = []
+        p_var = []
+        for dim in range(latent_dim):
+            if dim <= 1:
+                p_mean.append(f_radius(theta=theta_const, latent_dim=dim))
+                p_var.append(std ** 2)
+            else:
+                p_mean.append(f_radius(theta=-theta_const, latent_dim=dim))
+                p_var.append(std ** 2)
 
         prior_seq.append(torch.tensor([p_mean, p_var], dtype=torch.float32))
 
     return gp_list, prior_seq, init_prior_test
 
 
-def get_sin_task_sequence_full_range(n_restarts, num_test_processes, std):
+def get_step_sequence(n_restarts, num_test_processes, var_seq):
+    std = var_seq ** (1 / 2)
     kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
-
     gp_list = []
-    for i in range(num_test_processes):
-        gp_list.append([GaussianProcessRegressor(kernel=kernel,
-                                                 n_restarts_optimizer=n_restarts)
-                        for _ in range(num_test_processes)])
 
-    init_prior_test = [torch.tensor([[0.], [0.2 ** (1 / 2)]], dtype=torch.float32)
+    for _ in range(latent_dim):
+        curr_dim_list = []
+        for _ in range(num_test_processes):
+            curr_dim_list.append(GaussianProcessRegressor(kernel=kernel,
+                                                          normalize_y=False,
+                                                          n_restarts_optimizer=n_restarts))
+        gp_list.append(curr_dim_list)
+
+    # Creating prior distribution
+    theta = np.pi / 4
+    p_mean = []
+    p_var = []
+    for dim in range(latent_dim):
+        p_mean.append(f_radius(theta=theta, latent_dim=dim))
+        p_var.append(std ** 2)
+    init_prior_test = [torch.tensor([p_mean, p_var], dtype=torch.float32)
                        for _ in range(num_test_processes)]
 
+    # Create prior sequence
     prior_seq = []
-    for idx in range(0, 100):
-        friction = f_sin(idx)
-        prior_seq.append(torch.tensor([[friction], [std ** 2]], dtype=torch.float32))
+    for idx in range(40):
+        p_mean = []
+        p_var = []
+        theta = np.pi / 4 if idx <= 20 else -np.pi / 4
+        for dim in range(latent_dim):
+            if dim <= 1:
+                p_mean.append(f_radius(theta=theta, latent_dim=dim))
+                p_var.append(std ** 2)
+            else:
+                p_mean.append(f_radius(theta=-theta, latent_dim=dim))
+                p_var.append(std ** 2)
 
-    return gp_list, prior_seq, init_prior_test
-
-
-def get_sawtooth_wave(n_restarts, num_test_processes, std):
-    kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
-
-    gp_list = []
-    for i in range(num_test_processes):
-        gp_list.append([GaussianProcessRegressor(kernel=kernel,
-                                                 n_restarts_optimizer=n_restarts)
-                        for _ in range(num_test_processes)])
-
-    init_prior_test = [torch.tensor([[0.], [0.2 ** (1 / 2)]], dtype=torch.float32)
-                       for _ in range(num_test_processes)]
-
-    prior_seq = []
-    for idx in range(0, 110):
-        friction = f_sawtooth(idx)
-        prior_seq.append(torch.tensor([[friction], [std ** 2]], dtype=torch.float32))
+        prior_seq.append(torch.tensor([p_mean, p_var], dtype=torch.float32))
 
     return gp_list, prior_seq, init_prior_test
 
 
 def get_sequences(n_restarts, num_test_processes, std):
     # Retrieve task
-    gp_list_sin, prior_seq_sin, init_prior_sin = get_sin_task_sequence_full_range(n_restarts, num_test_processes, std)
-    gp_list_saw, prior_seq_saw, init_prior_saw = get_sawtooth_wave(n_restarts, num_test_processes, std)
-    gp_list_ood, prior_seq_ood, init_prior_ood = get_const_ood(n_restarts, num_test_processes, std)
+    gp_list_circuit, prior_seq_circuit, init_prior_circuit = get_circuit_sequences(
+        num_test_processes=num_test_processes,
+        n_restarts=n_restarts,
+        var_seq=std ** 2
+    )
+
+    gp_list_constant, prior_seq_constant, init_prior_constant = get_constant_sequence(
+        num_test_processes=num_test_processes,
+        n_restarts=n_restarts,
+        var_seq=std ** 2
+    )
+
+    gp_list_step, prior_seq_step, init_prior_step = get_step_sequence(
+        num_test_processes=num_test_processes,
+        n_restarts=n_restarts,
+        var_seq=std ** 2
+    )
+
     # Fill lists
-    p = [prior_seq_sin, prior_seq_saw, prior_seq_ood]
-    gp = [gp_list_sin, gp_list_saw, gp_list_ood]
-    ip = [init_prior_sin, init_prior_saw, init_prior_ood]
+    p = [prior_seq_circuit, prior_seq_constant, prior_seq_step]
+    gp = [gp_list_circuit, gp_list_constant, gp_list_step]
+    ip = [init_prior_circuit, init_prior_constant, init_prior_step]
+
     return p, gp, ip
 
 
@@ -151,7 +218,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                   num_eval_processes, task_generator, store_history, seed, log_dir,
                   device, task_len, model, vi, rest_args):
     if algo == "rl2":
-        algo_args = golf_rl2_arguments.get_args(rest_args)
+        algo_args = ant_goal_with_signal_rl2.get_args(rest_args)
         agent = RL2(hidden_size=algo_args.hidden_size,
                     use_elu=algo_args.use_elu,
                     clip_param=algo_args.clip_param,
@@ -163,7 +230,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                     eps=algo_args.ppo_eps,
                     max_grad_norm=algo_args.max_grad_norm,
                     action_space=action_space,
-                    obs_shape=(4,),
+                    obs_shape=(state_dim + action_dim + 1,),
                     use_obs_env=use_env_obs,
                     num_processes=algo_args.num_processes,
                     gamma=algo_args.gamma,
@@ -192,7 +259,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
         res = agent.meta_test(prior_sequences, task_generator, num_eval_processes, env_name, seed, log_dir,
                               task_len)
     elif algo == "ours":
-        algo_args = golf_bayes_arguments.get_args(rest_args)
+        algo_args = ant_goal_with_signal_bayes.get_args(rest_args)
         agent = OursAgent(action_space=action_space,
                           device=device,
                           gamma=algo_args.gamma,
@@ -210,7 +277,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                           use_gae=algo_args.use_gae,
                           gae_lambda=algo_args.gae_lambda,
                           use_proper_time_limits=algo_args.use_proper_time_limits,
-                          obs_shape=(3,),
+                          obs_shape=(2 * latent_dim + state_dim,),
                           latent_dim=latent_dim,
                           recurrent_policy=algo_args.recurrent,
                           hidden_size=algo_args.hidden_size,
@@ -219,12 +286,12 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                           vae_optim=None,
                           vae_min_seq=1,
                           vae_max_seq=algo_args.vae_max_steps,
-                          max_sigma=[prior_var_max ** (1/2)],
+                          max_sigma=prior_std_max,
                           use_decay_kld=algo_args.use_decay_kld,
                           decay_kld_rate=algo_args.decay_kld_rate,
                           env_dim=state_dim,
                           action_dim=action_dim,
-                          min_sigma=[prior_var_min ** (1/2)],
+                          min_sigma=prior_std_min,
                           use_xavier=algo_args.use_xavier,
                           use_rms_obs=algo_args.use_rms_obs,
                           use_rms_latent=algo_args.use_rms_latent,
@@ -246,13 +313,13 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                                         log_dir=log_dir,
                                         prior_sequences=prior_sequences,
                                         init_prior_sequences=init_prior_sequences,
-                                        use_env_obs=use_env_obs,
+                                        use_env_obs=True,
                                         num_eval_processes=num_eval_processes,
                                         task_generator=task_generator,
                                         store_history=store_history,
                                         task_len=task_len)
     elif algo == "ts_opt":
-        algo_args = golf_ts_arguments.get_args(rest_args)
+        algo_args = ant_goal_with_signal_ts.get_args(rest_args)
         agent = PosteriorOptTSAgent(vi=None,
                                     vi_optim=None,
                                     num_steps=algo_args.num_steps,
@@ -261,10 +328,10 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                                     gamma=algo_args.gamma,
                                     latent_dim=latent_dim,
                                     use_env_obs=use_env_obs,
-                                    max_sigma=[prior_var_max ** (1 / 2)],
-                                    min_sigma=[prior_var_min ** (1 / 2)],
+                                    max_sigma=prior_std_max,
+                                    min_sigma=prior_std_min,
                                     action_space=action_space,
-                                    obs_shape=(2,),
+                                    obs_shape=(state_dim + latent_dim,),
                                     clip_param=algo_args.clip_param,
                                     ppo_epoch=algo_args.ppo_epoch,
                                     num_mini_batch=algo_args.num_mini_batch,
@@ -295,7 +362,6 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                                     detach_every=algo_args.detach_every,
                                     use_rms_rew=algo_args.use_rms_rew
                                     )
-
         agent.actor_critic = model
         agent.vi = vi
 
@@ -322,7 +388,8 @@ def main(args, model, vi, algo, store, seed, rest_args):
                                                                    num_test_processes=args.num_test_processes,
                                                                    std=noise_seq_var ** (1 / 2))
 
-    task_generator = MiniGolfTaskGenerator(prior_var_min=prior_var_min, prior_var_max=prior_var_max)
+    task_generator = AntGoalWithSignalTaskGenerator(prior_var_max=prior_var_max,
+                                                    prior_var_min=prior_var_min)
 
     return get_meta_test(algo=algo, sw_size=args.sw_size, prior_sequences=prior_sequences,
                          init_prior_sequences=init_prior, gp_list_sequences=gp_list_sequences,
@@ -344,7 +411,6 @@ def run(id, seed, args, model, vi, algo, store, rest_args):
 
 # Scheduling runs: ENTRY POINT
 args, rest_args = get_test_args()
-
 
 if args.cuda and torch.cuda.is_available() and args.cuda_deterministic:
     torch.backends.cudnn.benchmark = False
@@ -392,10 +458,7 @@ for algo, f, sh in zip(algo_list, folder_list, store_history_list):
 print("END ALL RUNS")
 
 meta_test_res = [r_ours, r_ts, r_rl2]
-with open("temp.pkl", "wb") as output:
-    import pickle
 
-    pickle.dump(meta_test_res, output)
 
 # Create python plots from meta-test results
 prior_sequences, gp_list_sequences, init_prior = get_sequences(n_restarts=args.n_restarts_gp,
@@ -407,7 +470,6 @@ fd, folder_path_with_date = handle_folder_creation(result_path=folder)
 if args.dump_data:
     with open("{}data_results.pkl".format(folder_path_with_date), "wb") as output:
         pickle.dump(meta_test_res, output)
-
 
 create_csv_rewards(r_list=meta_test_res,
                    label_list=['Ours', 'TS', 'RL'],
@@ -427,6 +489,7 @@ create_csv_tracking(r_list=meta_test_res,
                     sequence_name_list=sequence_name_list,
                     folder_path_with_date=folder_path_with_date,
                     init_priors=init_prior,
-                    rescale_latent=[0.01, 2.0],
+                    rescale_latent=[-3.0, 3.0],
                     num_dim=latent_dim)
+
 fd.close()

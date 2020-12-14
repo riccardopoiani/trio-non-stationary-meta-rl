@@ -3,22 +3,23 @@ import pickle
 import torch
 import numpy as np
 import argparse
-import envs
 from gym import spaces
 
 from configs import cheetah_bayes_arguments, cheetah_rl2_arguments, cheetah_ts_arguments, \
-    gauss_bayes_arguments, gauss_rl2_arguments, gauss_ts_arguments, golf_bayes_arguments, golf_rl2_arguments, \
-    golf_ts_arguments, ant_goal_bayes_arguments, ant_goal_rl2_arguments, ant_goal_ts_arguments, ant_goal_with_signal_bayes
+    golf_bayes_arguments, golf_rl2_arguments, \
+    golf_ts_arguments, ant_goal_bayes_arguments, ant_goal_rl2_arguments, ant_goal_ts_arguments, \
+    cartpole_ts_arguments, cartpole_bayes_arguments, cartpole_rl2_arguments, golf_with_signals_bayes_arguments
+from deprecated_train import gauss_rl2_arguments, gauss_bayes_arguments, gauss_ts_arguments
 
-from inference.inference_network import EmbeddingInferenceNetwork
+from inference.inference_network import EmbeddingInferenceNetwork, InferenceNetwork
 from learner.ours import OursAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
-from task.ant_goal_ws_task_generator import AntGoalWithSignalTaskGenerator
 from task.cheetah_vel_task_generator import CheetahVelTaskGenerator
 from task.mini_golf_task_generator import MiniGolfTaskGenerator
 from task.ant_goal_task_generator import AntGoalTaskGenerator
-from task.scaled_gauss_task_generator import ScaledGaussTaskGenerator
+from task.cartpole_task_generator import CartPoleTaskGenerator
+from task.mini_golf_with_signals_generator import MiniGolfSignalsTaskGenerator
 from utilities.folder_management import handle_folder_creation
 
 
@@ -29,11 +30,16 @@ def get_sequences(n_restarts, num_test_processes, std):
 def main():
     # Task family settings
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env-type', default='cheetah_vel')
+    parser.add_argument('--env-type')
     parser.add_argument('--algo', default='rl2', help="choose in {'rl2', 'ours', 'ts'}")
+    parser.add_argument('--golf-num-signals', type=int, default=None)
     args, rest_args = parser.parse_known_args()
     env = args.env_type
     algo = args.algo
+    golf_num_signals = args.golf_num_signals
+
+    if env != "golf_signals":
+        assert golf_num_signals is None
 
     # Retrieve general arguments
     if env == "cheetah_vel":
@@ -43,11 +49,14 @@ def main():
             args = cheetah_bayes_arguments.get_args(rest_args)
         elif algo == "ts":
             args = cheetah_ts_arguments.get_args(rest_args)
-    elif env == "golf":
+    elif env == "golf" or env == "golf_signals":
         if algo == "rl2":
             args = golf_rl2_arguments.get_args(rest_args)
         elif algo == "ours":
-            args = golf_bayes_arguments.get_args(rest_args)
+            if env == "golf" or golf_num_signals <= 1:
+                args = golf_bayes_arguments.get_args(rest_args)
+            else:
+                args = golf_with_signals_bayes_arguments.get_args(rest_args)
         elif algo == "ts":
             args = golf_ts_arguments.get_args(rest_args)
     elif env == "gauss":
@@ -64,14 +73,19 @@ def main():
             args = ant_goal_bayes_arguments.get_args(rest_args)
         elif algo == "ts":
             args = ant_goal_ts_arguments.get_args(rest_args)
-    elif env == 'ant_goal_with_signal':
-        if algo == "ours":
-            args = ant_goal_with_signal_bayes.get_args(rest_args)
-        else:
-            raise NotImplemented()
+    elif env == "cartpole":
+        if algo == "rl2":
+            args = cartpole_rl2_arguments.get_args(rest_args)
+        elif algo == "ours":
+            args = cartpole_bayes_arguments.get_args(rest_args)
+        elif algo == "ts":
+            args = cartpole_ts_arguments.get_args(rest_args)
+    else:
+        raise NotImplemented()
 
     # Retrieve environment settings
-    if env == "cheetal_vel":
+    if env == "cheetah_vel":
+        use_simple_inference = False
         use_env_obs = True
         state_dim = 20
         action_dim = 6
@@ -81,13 +95,14 @@ def main():
         high_act = np.ones(6, dtype=np.float32)
         low_act = -np.ones(6, dtype=np.float32)
         action_space = spaces.Box(low=low_act, high=high_act)
-        env_name = "cheetah-v2"
+        env_name = "cheetahvel-v2"
         task_generator = CheetahVelTaskGenerator(prior_var_min=prior_var_min,
                                                  prior_var_max=prior_var_max)
         prior_std_max = [prior_var_max ** (1 / 2) for _ in range(latent_dim)]
         prior_std_min = [prior_var_min ** (1 / 2) for _ in range(latent_dim)]
         folder = "result/cheetahvelv2/"
     elif env == "ant_goal":
+        use_simple_inference = False
         use_env_obs = True
         folder = "result/antgoal/"
         env_name = "antgoal-v0"
@@ -103,25 +118,25 @@ def main():
         prior_std_min = [prior_var_min ** (1 / 2) for _ in range(latent_dim)]
         task_generator = AntGoalTaskGenerator(prior_var_min=prior_var_min,
                                               prior_var_max=prior_var_max)
-    elif env == "ant_goal_with_signal":
+    elif env == "cartpole":
+        use_simple_inference = False
         use_env_obs = True
-        folder = "result/antgoalsignal/"
-        env_name = "antgoalsignal-v0"
+        folder = "result/cartpole/"
+        env_name = "cartpolemt-v0"
         prior_var_min = 0.1
         prior_var_max = 0.4
-        latent_dim = 4
-        state_dim = 114
-        action_dim = 8
-        high_act = np.ones(8, dtype=np.float32)
-        low_act = -np.ones(8, dtype=np.float32)
-        action_space = spaces.Box(low=low_act, high=high_act)
-        prior_std_max = [prior_var_max ** (1/2) for _ in range(latent_dim)]
-        prior_std_min = [prior_var_min ** (1/2) for _ in range(latent_dim)]
-        task_generator = AntGoalWithSignalTaskGenerator(prior_var_max=prior_var_max,
-                                                        prior_var_min=prior_var_min)
+        latent_dim = 1
+        state_dim = 4
+        action_dim = 1
+        action_space = spaces.Discrete(2)
+        prior_std_max = [prior_var_max ** (1 / 2) for _ in range(latent_dim)]
+        prior_std_min = [prior_var_min ** (1 / 2) for _ in range(latent_dim)]
+        task_generator = CartPoleTaskGenerator(prior_var_min=prior_var_min,
+                                               prior_var_max=prior_var_max)
     elif env == "golf":
+        use_simple_inference = True
         folder = "result/minigolfv0/"
-        env_name = "minigolf-v0"
+        env_name = "golf-v0"
         use_env_obs = True
         prior_var_min = 0.001
         prior_var_max = 0.2
@@ -137,24 +152,29 @@ def main():
                                                prior_var_max=prior_var_max)
         prior_std_max = [prior_var_max ** (1 / 2) for _ in range(latent_dim)]
         prior_std_min = [prior_var_min ** (1 / 2) for _ in range(latent_dim)]
-    elif env == "gauss":
-        use_env_obs = False
-        folder = "result/scalegauss/"
-        env_name = "scalegauss-v0"
+    elif env == "golf_signals":
+        if golf_num_signals <= 1:
+            use_simple_inference = True
+        else:
+            use_simple_inference = False
+        folder = "result/golf_sig_{}/".format(golf_num_signals)
+        env_name = "golfsignals-v0"
+        use_env_obs = True
         prior_var_min = 0.001
-        prior_var_max = 1
-        latent_dim = 1
+        prior_var_max = 0.2
+        latent_dim = 1 + golf_num_signals
+        min_action = 1e-5
+        max_action = 10.
         action_dim = 1
-        state_dim = 0
-        min_action = -1.
-        max_action = 1.
+        state_dim = 1 + golf_num_signals
         action_space = spaces.Box(low=min_action,
                                   high=max_action,
                                   shape=(1,))
+        task_generator = MiniGolfSignalsTaskGenerator(prior_var_min=prior_var_min,
+                                                      prior_var_max=prior_var_max,
+                                                      num_signals=golf_num_signals)
         prior_std_max = [prior_var_max ** (1 / 2) for _ in range(latent_dim)]
         prior_std_min = [prior_var_min ** (1 / 2) for _ in range(latent_dim)]
-        task_generator = ScaledGaussTaskGenerator(prior_var_min=prior_var_min,
-                                                  prior_var_max=prior_var_max)
 
     else:
         raise RuntimeError("Env {} not available".format(env))
@@ -172,7 +192,7 @@ def main():
     device = torch.device("cuda:0" if args.cuda else "cpu")
 
     if len(args.folder) == 0:
-        folder = folder + args.algo + "/"
+        folder = folder + algo + "/"
     else:
         folder = folder + args.folder + "/"
     fd, folder_path_with_date = handle_folder_creation(result_path=folder)
@@ -182,7 +202,7 @@ def main():
                                                                    std=noise_seq_var ** (1 / 2))
 
     print("Algorithm start..")
-    if args.algo == 'rl2':
+    if algo == 'rl2':
         if use_env_obs:
             obs_dim = state_dim + action_dim + 1
         else:
@@ -244,21 +264,24 @@ def main():
             pickle.dump(test_list, output)
 
         torch.save(agent.actor_critic, "{}rl2_actor_critic".format(folder_path_with_date))
-    elif args.algo == 'ts_opt':
+    elif algo == 'ts':
         if use_env_obs:
             dim = state_dim + latent_dim
         else:
             dim = latent_dim
         obs_shape = (dim,)  # latent dim + obs
 
-        vi = EmbeddingInferenceNetwork(z_dim=latent_dim,
-                                       action_dim=action_dim,
-                                       action_embedding_dim=args.vae_action_emb_dim,
-                                       state_dim=state_dim,
-                                       state_embedding_dim=args.vae_state_emb_dim,
-                                       reward_embedding_dim=args.vae_reward_emb_dim,
-                                       prior_embedding_dim=args.vae_prior_emb_dim,
-                                       hidden_size_dim=args.vae_gru_dim)
+        if use_simple_inference:
+            vi = InferenceNetwork(n_in=action_dim+state_dim+1+(latent_dim*2), z_dim=latent_dim)
+        else:
+            vi = EmbeddingInferenceNetwork(z_dim=latent_dim,
+                                           action_dim=action_dim,
+                                           action_embedding_dim=args.vae_action_emb_dim,
+                                           state_dim=state_dim,
+                                           state_embedding_dim=args.vae_state_emb_dim,
+                                           reward_embedding_dim=args.vae_reward_emb_dim,
+                                           prior_embedding_dim=args.vae_prior_emb_dim,
+                                           hidden_size_dim=args.vae_gru_dim)
 
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
@@ -337,7 +360,7 @@ def main():
         with open("{}eval_opt.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(eval_opt, output)
 
-    elif args.algo == "ours":
+    elif algo == "ours":
         vae_min_seq = 1
         vae_max_seq = args.vae_max_steps
 
@@ -349,14 +372,17 @@ def main():
         obs_shape = (dim,)
 
         # 8 action + (111 obs + 2 * latent_dim) + 1 reward
-        vi = EmbeddingInferenceNetwork(z_dim=latent_dim,
-                                       action_dim=action_dim,
-                                       action_embedding_dim=args.vae_action_emb_dim,
-                                       state_dim=state_dim,
-                                       state_embedding_dim=args.vae_state_emb_dim,
-                                       reward_embedding_dim=args.vae_reward_emb_dim,
-                                       prior_embedding_dim=args.vae_prior_emb_dim,
-                                       hidden_size_dim=args.vae_gru_dim)
+        if use_simple_inference:
+            vi = InferenceNetwork(n_in=action_dim+state_dim+1+(latent_dim*2), z_dim=latent_dim)
+        else:
+            vi = EmbeddingInferenceNetwork(z_dim=latent_dim,
+                                           action_dim=action_dim,
+                                           action_embedding_dim=args.vae_action_emb_dim,
+                                           state_dim=state_dim,
+                                           state_embedding_dim=args.vae_state_emb_dim,
+                                           reward_embedding_dim=args.vae_reward_emb_dim,
+                                           prior_embedding_dim=args.vae_prior_emb_dim,
+                                           hidden_size_dim=args.vae_gru_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
         agent = OursAgent(action_space=action_space, device=device, gamma=args.gamma,
@@ -429,7 +455,7 @@ def main():
         torch.save(agent.vae, "{}agent_vi".format(folder_path_with_date))
         torch.save(agent.actor_critic, "{}agent_ac".format(folder_path_with_date))
     else:
-        raise NotImplementedError("Agent {} not available".format(args.algo))
+        raise NotImplementedError("Agent {} not available".format(algo))
 
 
 if __name__ == "__main__":
