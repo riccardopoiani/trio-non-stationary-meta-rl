@@ -4,10 +4,10 @@ import numpy as np
 import torch
 
 from inference.inference_utils import loss_inference_closed_form
-from ppo_a2c.algo.ppo import PPO
-from ppo_a2c.envs import get_vec_envs_multi_task
-from ppo_a2c.model import MLPBase, Policy, MLPFeatureExtractor
-from ppo_a2c.storage import RolloutStorage
+from ppo.algo.ppo import PPO
+from ppo.envs import get_vec_envs_multi_task
+from ppo.model import MLPBase, Policy, MLPFeatureExtractor
+from ppo.storage import RolloutStorage
 from utilities.observation_utils import augment_obs_posterior, get_posterior
 
 

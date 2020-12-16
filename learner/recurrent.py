@@ -3,10 +3,10 @@ from functools import reduce
 import numpy as np
 import torch
 
-from ppo_a2c.algo.ppo import PPO
-from ppo_a2c.envs import get_vec_envs_multi_task
-from ppo_a2c.model import MLPBase, Policy, MLPRL2FeatureExtractor, RL2Base
-from ppo_a2c.storage import RolloutStorage
+from ppo.algo.ppo import PPO
+from ppo.envs import get_vec_envs_multi_task
+from ppo.model import MLPBase, Policy, MLPRL2FeatureExtractor, RL2Base
+from ppo.storage import RolloutStorage
 
 
 class RL2:

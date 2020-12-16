@@ -22,7 +22,7 @@ warnings.filterwarnings(action='ignore')
 
 folder = "result/metatest/antgoal/"
 env_name = "antgoal-v0"
-folder_list = ["result/antgoal/ours300/", "result/antgoal/rl2/", "result/antgoal/tsvae/"]
+folder_list = ["result/antgoal/ours300/", "result/antgoal/rl2huberfairdata/", "result/antgoal/tsvae/"]
 algo_list = ['ours', 'rl2', 'ts_opt']
 label_list = ['ours', 'rl2', 'ts_opt']
 has_track_list = [True, False, True]
@@ -42,9 +42,9 @@ action_space = spaces.Box(low=low_act, high=high_act)
 prior_std_max = [prior_var_max ** (1 / 2) for _ in range(latent_dim)]
 prior_std_min = [prior_var_min ** (1 / 2) for _ in range(latent_dim)]
 
-num_seq = 3
-seq_len_list = [20, 30, 40]
-sequence_name_list = ['circuit', 'constant', 'step']
+num_seq = 2
+seq_len_list = [100, 30]
+sequence_name_list = ['circuit', 'step']
 
 
 def f_radius(theta, latent_dim):
@@ -54,8 +54,9 @@ def f_radius(theta, latent_dim):
         return np.sin(theta)
 
 
-def linear_theta(x):
-    return x * 2 * np.pi / 20
+def root_theta(x):
+    x = x + 5
+    return (x ** (1 / 2)) * 2 * np.pi / 15
 
 
 def get_circuit_sequences(n_restarts, num_test_processes, var_seq):
@@ -82,49 +83,12 @@ def get_circuit_sequences(n_restarts, num_test_processes, var_seq):
 
     # Create prior sequence
     prior_seq = []
-    for idx in range(20):
+    for idx in range(100):
         p_mean = []
         p_var = []
-        theta = linear_theta(idx)
+        theta = root_theta(idx)
         for dim in range(latent_dim):
             p_mean.append(f_radius(theta=theta, latent_dim=dim))
-            p_var.append(std ** 2)
-
-        prior_seq.append(torch.tensor([p_mean, p_var], dtype=torch.float32))
-
-    return gp_list, prior_seq, init_prior_test
-
-
-def get_constant_sequence(n_restarts, num_test_processes, var_seq):
-    std = var_seq ** (1 / 2)
-    kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
-    gp_list = []
-
-    for _ in range(latent_dim):
-        curr_dim_list = []
-        for _ in range(num_test_processes):
-            curr_dim_list.append(GaussianProcessRegressor(kernel=kernel,
-                                                          normalize_y=False,
-                                                          n_restarts_optimizer=n_restarts))
-        gp_list.append(curr_dim_list)
-
-    # Creating prior distribution
-    theta_const = np.pi / 4
-    p_mean = []
-    p_var = []
-    for dim in range(latent_dim):
-        p_mean.append(f_radius(theta=theta_const, latent_dim=dim))
-        p_var.append(std ** 2)
-    init_prior_test = [torch.tensor([p_mean, p_var], dtype=torch.float32)
-                       for _ in range(num_test_processes)]
-
-    # Create prior sequence
-    prior_seq = []
-    for idx in range(30):
-        p_mean = []
-        p_var = []
-        for dim in range(latent_dim):
-            p_mean.append(f_radius(theta=theta_const, latent_dim=dim))
             p_var.append(std ** 2)
 
         prior_seq.append(torch.tensor([p_mean, p_var], dtype=torch.float32))
@@ -157,10 +121,10 @@ def get_step_sequence(n_restarts, num_test_processes, var_seq):
 
     # Create prior sequence
     prior_seq = []
-    for idx in range(40):
+    for idx in range(30):
         p_mean = []
         p_var = []
-        theta = np.pi / 4 if idx <= 20 else -np.pi / 4
+        theta = np.pi / 4 if idx <= 20 else np.pi * (5/4)
         for dim in range(latent_dim):
             p_mean.append(f_radius(theta=theta, latent_dim=dim))
             p_var.append(std ** 2)
@@ -178,12 +142,6 @@ def get_sequences(n_restarts, num_test_processes, std):
         var_seq=std ** 2
     )
 
-    gp_list_constant, prior_seq_constant, init_prior_constant = get_constant_sequence(
-        num_test_processes=num_test_processes,
-        n_restarts=n_restarts,
-        var_seq=std ** 2
-    )
-
     gp_list_step, prior_seq_step, init_prior_step = get_step_sequence(
         num_test_processes=num_test_processes,
         n_restarts=n_restarts,
@@ -191,9 +149,9 @@ def get_sequences(n_restarts, num_test_processes, std):
     )
 
     # Fill lists
-    p = [prior_seq_circuit, prior_seq_constant, prior_seq_step]
-    gp = [gp_list_circuit, gp_list_constant, gp_list_step]
-    ip = [init_prior_circuit, init_prior_constant, init_prior_step]
+    p = [prior_seq_circuit, prior_seq_step]
+    gp = [gp_list_circuit, gp_list_step]
+    ip = [init_prior_circuit, init_prior_step]
 
     return p, gp, ip
 
@@ -214,7 +172,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                     eps=algo_args.ppo_eps,
                     max_grad_norm=algo_args.max_grad_norm,
                     action_space=action_space,
-                    obs_shape=(state_dim+action_dim+1,),
+                    obs_shape=(state_dim + action_dim + 1,),
                     use_obs_env=use_env_obs,
                     num_processes=algo_args.num_processes,
                     gamma=algo_args.gamma,
@@ -261,7 +219,7 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                           use_gae=algo_args.use_gae,
                           gae_lambda=algo_args.gae_lambda,
                           use_proper_time_limits=algo_args.use_proper_time_limits,
-                          obs_shape=(2*latent_dim + state_dim,),
+                          obs_shape=(2 * latent_dim + state_dim,),
                           latent_dim=latent_dim,
                           recurrent_policy=algo_args.recurrent,
                           hidden_size=algo_args.hidden_size,

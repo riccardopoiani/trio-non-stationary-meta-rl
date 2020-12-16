@@ -12,7 +12,6 @@ register(
     max_episode_steps=20
 )
 
-"""
 register(
     'antgoal-v0',
     entry_point='envs.ant_goal:AntGoal',
@@ -25,10 +24,3 @@ register(
     max_episode_steps=200
 )
 
-register(
-    'cartpolemt-v0',
-    entry_point='envs.cartpole_multitask:CartPoleMultiTaskEnv',
-    max_episode_steps=400
-)
-
-"""

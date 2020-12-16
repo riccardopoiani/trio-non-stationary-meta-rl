@@ -5,7 +5,7 @@ Code taken from: https://github.com/ikostrikov/pytorch-a2c-ppo-acktr-gail
 import torch
 import torch.nn as nn
 
-from ppo_a2c.utils import AddBias, init
+from ppo.utils import AddBias, init
 
 """
 Modify standard PyTorch distributions so they are compatible with this code.

@@ -13,9 +13,8 @@ from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
 from task.mini_golf_task_generator import MiniGolfTaskGenerator
 from utilities.folder_management import handle_folder_creation
-from utilities.plots.plots import create_csv_rewards, create_csv_tracking, view_results_multiple_dim
+from utilities.plots.plots import create_csv_rewards, create_csv_tracking
 from utilities.test_arguments import get_test_args
-
 
 # General parameters
 folder = "result/metatest/minigolf/"
@@ -41,8 +40,8 @@ action_space = spaces.Box(low=min_action,
                           shape=(1,))
 
 num_seq = 3
-seq_len_list = [100, 110, 10]
-sequence_name_list = ['sin', 'sawtooth', 'ood']
+seq_len_list = [100, 110, 15]
+sequence_name_list = ['sin', 'sawtooth', 'tan']
 
 
 def f_sin(x, freq=0.1, offset=-0.7, a=-0.2):
@@ -56,7 +55,7 @@ def f_sawtooth(x, period=50):
     return saw_tooth
 
 
-def get_const_ood(n_restarts, num_test_processes, std):
+def get_tanh(n_restarts, num_test_processes, std):
     kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
 
     gp_list = []
@@ -68,26 +67,23 @@ def get_const_ood(n_restarts, num_test_processes, std):
                                                           n_restarts_optimizer=n_restarts))
         gp_list.append(curr_dim_list)
 
-    f_const = 1.2
-
     p_mean = []
     p_var = []
     for dim in range(latent_dim):
-        p_mean.append(1.)
+        p_mean.append(np.tanh(-5) + 0.2)
         p_var.append(0.2 ** (1 / 2))
     init_prior_test = [torch.tensor([p_mean, p_var], dtype=torch.float32)
                        for _ in range(num_test_processes)]
 
     prior_seq = []
-    for idx in range(0, 10):
+    for idx in range(0, 15):
         p_mean = []
         p_var = []
+        x = idx - 5
+        friction = np.tanh(x) + 0.2
 
         for dim in range(latent_dim):
-            if dim == 0:
-                p_mean.append(f_const)
-            else:
-                p_mean.append(np.random.uniform(low=-1, high=1))
+            p_mean.append(friction)
             p_var.append(std ** 2)
 
         prior_seq.append(torch.tensor([p_mean, p_var], dtype=torch.float32))
@@ -139,11 +135,12 @@ def get_sequences(n_restarts, num_test_processes, std):
     # Retrieve task
     gp_list_sin, prior_seq_sin, init_prior_sin = get_sin_task_sequence_full_range(n_restarts, num_test_processes, std)
     gp_list_saw, prior_seq_saw, init_prior_saw = get_sawtooth_wave(n_restarts, num_test_processes, std)
-    gp_list_ood, prior_seq_ood, init_prior_ood = get_const_ood(n_restarts, num_test_processes, std)
+    gp_list_tanh, prior_seq_tanh, init_prior_tanh = get_tanh(n_restarts, num_test_processes, std)
+
     # Fill lists
-    p = [prior_seq_sin, prior_seq_saw, prior_seq_ood]
-    gp = [gp_list_sin, gp_list_saw, gp_list_ood]
-    ip = [init_prior_sin, init_prior_saw, init_prior_ood]
+    p = [prior_seq_sin, prior_seq_saw, prior_seq_tanh]
+    gp = [gp_list_sin, gp_list_saw, gp_list_tanh]
+    ip = [init_prior_sin, init_prior_saw, init_prior_tanh]
     return p, gp, ip
 
 
@@ -219,12 +216,12 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
                           vae_optim=None,
                           vae_min_seq=1,
                           vae_max_seq=algo_args.vae_max_steps,
-                          max_sigma=[prior_var_max ** (1/2)],
+                          max_sigma=[prior_var_max ** (1 / 2)],
                           use_decay_kld=algo_args.use_decay_kld,
                           decay_kld_rate=algo_args.decay_kld_rate,
                           env_dim=state_dim,
                           action_dim=action_dim,
-                          min_sigma=[prior_var_min ** (1/2)],
+                          min_sigma=[prior_var_min ** (1 / 2)],
                           use_xavier=algo_args.use_xavier,
                           use_rms_obs=algo_args.use_rms_obs,
                           use_rms_latent=algo_args.use_rms_latent,
@@ -345,7 +342,6 @@ def run(id, seed, args, model, vi, algo, store, rest_args):
 # Scheduling runs: ENTRY POINT
 args, rest_args = get_test_args()
 
-
 if args.cuda and torch.cuda.is_available() and args.cuda_deterministic:
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
@@ -407,7 +403,6 @@ fd, folder_path_with_date = handle_folder_creation(result_path=folder)
 if args.dump_data:
     with open("{}data_results.pkl".format(folder_path_with_date), "wb") as output:
         pickle.dump(meta_test_res, output)
-
 
 create_csv_rewards(r_list=meta_test_res,
                    label_list=['Ours', 'TS', 'RL'],

@@ -13,12 +13,12 @@ from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
 from task.cheetah_vel_task_generator import CheetahVelTaskGenerator
 from utilities.folder_management import handle_folder_creation
-from utilities.plots.plots import view_results_multiple_dim, create_csv_rewards, create_csv_tracking
+from utilities.plots.plots import create_csv_rewards, create_csv_tracking
 from utilities.test_arguments import get_test_args
 
 folder = "result/metatest/cheetahvelv2/"
 env_name = "cheetahvel-v2"
-folder_list = ["result/cheetahvelv2/oursinitnewp/", "result/cheetahvelv2/rl2init/", "result/cheetahvelv2/tsinitsmooth/"]
+folder_list = ["result/cheetahvelv2/oursinitnewp/", "result/cheetahvelv2/rl2huberfairdata/", "result/cheetahvelv2/tsinitsmooth/"]
 algo_list = ['ours', 'rl2', 'ts_opt']
 label_list = ['ours', 'rl2', 'ts_opt']
 has_track_list = [True, False, True]
@@ -38,23 +38,21 @@ action_space = spaces.Box(low=low_act, high=high_act)
 prior_std_max = [prior_var_max ** (1 / 2) for _ in range(latent_dim)]
 prior_std_min = [prior_var_min ** (1 / 2) for _ in range(latent_dim)]
 
-num_seq = 3
-seq_len_list = [15, 20, 30]
-sequence_name_list = ['const_acc', 'const', 'quad_dec']
+num_seq = 2
+seq_len_list = [100, 90]
+sequence_name_list = ['sin_tan', 'tan_dec']
 
 
-def f_linear(x, m=0.13, q=-0.9):
-    return x * m + q
+def f_tan(x):
+    return -np.tanh(x / 16) + 0.2
 
 
-def f_quadratic(x):
-    a = -2 / 900
-    b = 0
-    c = 1
-    return a * (x ** 2) + b * x + c
+def f_sin_tan(x):
+    x = x + 5
+    return (-np.tanh(x / 16) + (np.sin(x / 2) / (x / 16))) / 4
 
 
-def get_linear_deceleration(num_test_processes, n_restarts, std, seq_len):
+def get_tan_deceleration(num_test_processes, n_restarts, std, seq_len):
     kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
 
     gp_list = []
@@ -63,19 +61,19 @@ def get_linear_deceleration(num_test_processes, n_restarts, std, seq_len):
                                                  n_restarts_optimizer=n_restarts)
                         for _ in range(num_test_processes)])
 
-    target_vel = f_quadratic(0)
+    target_vel = f_tan(0)
     init_prior_test = [torch.tensor([[target_vel], [prior_var_min ** (1 / 2)]], dtype=torch.float32)
                        for _ in range(num_test_processes)]
 
     prior_seq = []
     for idx in range(0, seq_len):
-        target_vel = f_quadratic(x=idx)
+        target_vel = f_tan(x=idx)
         prior_seq.append(torch.tensor([[target_vel], [std ** 2]], dtype=torch.float32))
 
     return gp_list, prior_seq, init_prior_test
 
 
-def get_constant_speed(num_test_processes, n_restarts, std, seq_len):
+def get_sin_tan(num_test_processes, n_restarts, std, seq_len):
     kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
 
     gp_list = []
@@ -84,64 +82,37 @@ def get_constant_speed(num_test_processes, n_restarts, std, seq_len):
                                                  n_restarts_optimizer=n_restarts)
                         for _ in range(num_test_processes)])
 
-    target_vel = 0.8
-
-    init_prior_test = [torch.tensor([[target_vel], [prior_var_min ** (1 / 2)]], dtype=torch.float32)
+    init_vel = f_sin_tan(0)
+    init_prior_test = [torch.tensor([[init_vel], [prior_var_min ** (1 / 2)]], dtype=torch.float32)
                        for _ in range(num_test_processes)]
 
     prior_seq = []
     for idx in range(0, seq_len):
-        prior_seq.append(torch.tensor([[target_vel], [std ** 2]], dtype=torch.float32))
-
-    return gp_list, prior_seq, init_prior_test
-
-
-def get_constant_acceleration(num_test_processes, n_restarts, std, seq_len):
-    kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
-
-    gp_list = []
-    for i in range(latent_dim):
-        gp_list.append([GaussianProcessRegressor(kernel=kernel,
-                                                 n_restarts_optimizer=n_restarts)
-                        for _ in range(num_test_processes)])
-
-    init_prior_test = [torch.tensor([[f_linear(0)], [prior_var_min ** (1 / 2)]], dtype=torch.float32)
-                       for _ in range(num_test_processes)]
-
-    prior_seq = []
-    for idx in range(0, seq_len):
-        vel = f_linear(idx)
-        prior_seq.append(torch.tensor([[vel], [std ** 2]], dtype=torch.float32))
+        prior_seq.append(torch.tensor([[f_sin_tan(idx)], [std ** 2]], dtype=torch.float32))
 
     return gp_list, prior_seq, init_prior_test
 
 
 def get_sequences(n_restarts, num_test_processes, std):
     # Retrieve task
-    gp_list_const_acc, prior_seq_const_acc, init_prior_const_acc = get_constant_acceleration(
+    gp_list_sintan, prior_seq_sintan, init_prior_sintan = get_sin_tan(
         num_test_processes=num_test_processes,
         std=std,
         n_restarts=n_restarts,
-        seq_len=15)
-
-    gp_list_const, prior_seq_const, init_prior_const = get_constant_speed(
-        num_test_processes=num_test_processes,
-        std=std,
-        n_restarts=n_restarts,
-        seq_len=20
+        seq_len=100
     )
 
-    gp_list_quad, prior_seq_quad, init_prior_quad = get_linear_deceleration(
+    gp_list_tandec, prior_seq_tandec, init_prior_tandec = get_tan_deceleration(
         num_test_processes=num_test_processes,
         std=std,
         n_restarts=n_restarts,
-        seq_len=30
+        seq_len=90
     )
 
     # Fill lists
-    p = [prior_seq_const_acc, prior_seq_const, prior_seq_quad]
-    gp = [gp_list_const_acc, gp_list_const, gp_list_quad]
-    ip = [init_prior_const_acc, init_prior_const, init_prior_quad]
+    p = [prior_seq_sintan, prior_seq_tandec]
+    gp = [gp_list_sintan, gp_list_tandec]
+    ip = [init_prior_sintan, init_prior_tandec]
 
     return p, gp, ip
 

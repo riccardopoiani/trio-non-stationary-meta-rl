@@ -18,9 +18,9 @@ from utilities.test_arguments import get_test_args
 # General parameters
 folder = "result/metatest/minigolfrobust/"
 env_name = 'golfsignals-v0'
-folder_list = ["result/golf_sig_3/ourssig3/",
-               "result/golf_sig_2/ourssig2/",
-               "result/golf_sig_1/ourssig1/",
+folder_list = ["result/golf_robust/golf_sig_3/ourssig3diff/",
+               "result/golf_robust/golf_sig_2/ourssig2diff/",
+               "result/golf_robust/golf_sig_1/ourssig1diff/",
                "result/golf/oursnewnew/"]
 algo_list = ['ours', 'ours', 'ours', 'ours']
 label_list = ['ours_3', 'ours_2', 'ours_1', 'ours_0']
@@ -39,8 +39,8 @@ action_space = spaces.Box(low=min_action,
                           shape=(1,))
 
 num_seq = 3
-seq_len_list = [100, 110, 10]
-sequence_name_list = ['sin', 'sawtooth', 'const_ood']
+seq_len_list = [100, 110, 15]
+sequence_name_list = ['sin', 'sawtooth', 'tan']
 
 
 def f_sin(x, freq=0.1, offset=-0.7, a=-0.2):
@@ -54,7 +54,7 @@ def f_sawtooth(x, period=50):
     return saw_tooth
 
 
-def get_const_ood(n_restarts, num_test_processes, std, latent_dim):
+def get_const_tan(n_restarts, num_test_processes, std, latent_dim):
     kernel = C(1) * RBF(1) + WhiteKernel(0.01, noise_level_bounds="fixed") + DotProduct(1)
 
     gp_list = []
@@ -66,24 +66,24 @@ def get_const_ood(n_restarts, num_test_processes, std, latent_dim):
                                                           n_restarts_optimizer=n_restarts))
         gp_list.append(curr_dim_list)
 
-    f_const = 1.2
-
     p_mean = []
     p_var = []
     for dim in range(latent_dim):
-        p_mean.append(1.)
+        p_mean.append(np.tanh(-5) + 0.2)
         p_var.append(0.2 ** (1 / 2))
     init_prior_test = [torch.tensor([p_mean, p_var], dtype=torch.float32)
                        for _ in range(num_test_processes)]
 
     prior_seq = []
-    for idx in range(0, 10):
+    for idx in range(0, 15):
         p_mean = []
         p_var = []
 
+        x = idx - 5
+        friction = np.tanh(x) + 0.2
         for dim in range(latent_dim):
             if dim == 0:
-                p_mean.append(f_const)
+                p_mean.append(friction)
             else:
                 p_mean.append(np.random.uniform(low=-1, high=1))
             p_var.append(std ** 2)
@@ -175,13 +175,13 @@ def get_sequences(n_restarts, num_test_processes, std, num_sig):
                                                                                   std, num_sig+1)
     gp_list_saw, prior_seq_saw, init_prior_saw = get_sawtooth_wave(n_restarts, num_test_processes, std,
                                                                    num_sig+1)
-    gp_list_ood, prior_seq_ood, init_prior_ood = get_const_ood(n_restarts, num_test_processes, std,
-                                                               num_sig+1)
+    gp_list_tan, prior_seq_tan, init_prior_tan = get_const_tan(n_restarts, num_test_processes, std,
+                                                               num_sig + 1)
 
     # Fill lists
-    p = [prior_seq_sin, prior_seq_saw, prior_seq_ood]
-    gp = [gp_list_sin, gp_list_saw, gp_list_ood]
-    ip = [init_prior_sin, init_prior_saw, init_prior_ood]
+    p = [prior_seq_sin, prior_seq_saw, prior_seq_tan]
+    gp = [gp_list_sin, gp_list_saw, gp_list_tan]
+    ip = [init_prior_sin, init_prior_saw, init_prior_tan]
     return p, gp, ip
 
 

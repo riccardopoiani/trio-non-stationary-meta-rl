@@ -8,8 +8,7 @@ from gym import spaces
 from configs import cheetah_bayes_arguments, cheetah_rl2_arguments, cheetah_ts_arguments, \
     golf_bayes_arguments, golf_rl2_arguments, \
     golf_ts_arguments, ant_goal_bayes_arguments, ant_goal_rl2_arguments, ant_goal_ts_arguments, \
-    cartpole_ts_arguments, cartpole_bayes_arguments, cartpole_rl2_arguments, golf_with_signals_bayes_arguments
-from deprecated_train import gauss_rl2_arguments, gauss_bayes_arguments, gauss_ts_arguments
+    golf_with_signals_bayes_arguments
 
 from inference.inference_network import EmbeddingInferenceNetwork, InferenceNetwork
 from learner.ours import OursAgent
@@ -18,7 +17,6 @@ from learner.recurrent import RL2
 from task.cheetah_vel_task_generator import CheetahVelTaskGenerator
 from task.mini_golf_task_generator import MiniGolfTaskGenerator
 from task.ant_goal_task_generator import AntGoalTaskGenerator
-from task.cartpole_task_generator import CartPoleTaskGenerator
 from task.mini_golf_with_signals_generator import MiniGolfSignalsTaskGenerator
 from utilities.folder_management import handle_folder_creation
 
@@ -59,13 +57,6 @@ def main():
                 args = golf_with_signals_bayes_arguments.get_args(rest_args)
         elif algo == "ts":
             args = golf_ts_arguments.get_args(rest_args)
-    elif env == "gauss":
-        if algo == "rl2":
-            args = gauss_rl2_arguments.get_args(rest_args)
-        elif algo == "ours":
-            args = gauss_bayes_arguments.get_args(rest_args)
-        elif algo == "ts":
-            args = gauss_ts_arguments.get_args(rest_args)
     elif env == "ant_goal":
         if algo == "rl2":
             args = ant_goal_rl2_arguments.get_args(rest_args)
@@ -73,13 +64,6 @@ def main():
             args = ant_goal_bayes_arguments.get_args(rest_args)
         elif algo == "ts":
             args = ant_goal_ts_arguments.get_args(rest_args)
-    elif env == "cartpole":
-        if algo == "rl2":
-            args = cartpole_rl2_arguments.get_args(rest_args)
-        elif algo == "ours":
-            args = cartpole_bayes_arguments.get_args(rest_args)
-        elif algo == "ts":
-            args = cartpole_ts_arguments.get_args(rest_args)
     else:
         raise NotImplemented()
 
@@ -118,21 +102,6 @@ def main():
         prior_std_min = [prior_var_min ** (1 / 2) for _ in range(latent_dim)]
         task_generator = AntGoalTaskGenerator(prior_var_min=prior_var_min,
                                               prior_var_max=prior_var_max)
-    elif env == "cartpole":
-        use_simple_inference = False
-        use_env_obs = True
-        folder = "result/cartpole/"
-        env_name = "cartpolemt-v0"
-        prior_var_min = 0.1
-        prior_var_max = 0.4
-        latent_dim = 1
-        state_dim = 4
-        action_dim = 1
-        action_space = spaces.Discrete(2)
-        prior_std_max = [prior_var_max ** (1 / 2) for _ in range(latent_dim)]
-        prior_std_min = [prior_var_min ** (1 / 2) for _ in range(latent_dim)]
-        task_generator = CartPoleTaskGenerator(prior_var_min=prior_var_min,
-                                               prior_var_max=prior_var_max)
     elif env == "golf":
         use_simple_inference = True
         folder = "result/minigolfv0/"
