@@ -35,7 +35,7 @@ raw data will be dumped on a 'pickle' file. Default folder will be `result/metat
 Please, note that meta-test scripts assumes that you trained at least a policy for each of the 3 algorithms: if this was
 not the case, you may want to modify a bit the script. <br> <br>
 
-For what concerns MAML and VariBAD, we used the code available at
+For what concerns results MAML and VariBAD, we used the code available at
 [tristandeleu/pytorch-maml-rl](https://github.com/tristandeleu/pytorch-maml-rl) and 
 [lmzintgraf/varibad](https://github.com/lmzintgraf/varibad) respectively, with small modifications in order to meta-test
 specific sequences of tasks. 

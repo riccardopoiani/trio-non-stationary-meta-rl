@@ -20,7 +20,7 @@ from utilities.test_arguments import get_test_args
 folder = "result/metatest/minigolf/"
 env_name = "golf-v0"
 folder_list = ["result/golf/oursnewnew/",
-               "result/golf/tsoptnewnew/",
+               "result/golf/tsnewnew/",
                "result/golf/rl2maystable/"]
 algo_list = ['ours', 'ts_opt', 'rl2']
 label_list = ['ours', 'ts_opt', 'rl2']
@@ -40,8 +40,12 @@ action_space = spaces.Box(low=min_action,
                           shape=(1,))
 
 num_seq = 3
-seq_len_list = [100, 110, 15]
+seq_len_list = [3, 110, 50]
 sequence_name_list = ['sin', 'sawtooth', 'tan']
+
+
+def f_linear(x):
+    return 1 + (x - 20) / 10
 
 
 def f_sin(x, freq=0.1, offset=-0.7, a=-0.2):
@@ -52,7 +56,7 @@ def f_sin(x, freq=0.1, offset=-0.7, a=-0.2):
 def f_sawtooth(x, period=50):
     saw_tooth = 2 * (x / period - np.floor(0.5 + x / period))
     saw_tooth = (-0.6 - (-1)) / (1 - (-1)) * (saw_tooth - 1) - 0.6
-    return saw_tooth
+    return saw_tooth + 0.3
 
 
 def get_tanh(n_restarts, num_test_processes, std):
@@ -76,7 +80,7 @@ def get_tanh(n_restarts, num_test_processes, std):
                        for _ in range(num_test_processes)]
 
     prior_seq = []
-    for idx in range(0, 15):
+    for idx in range(0, 50):
         p_mean = []
         p_var = []
         x = idx - 5
@@ -104,7 +108,7 @@ def get_sin_task_sequence_full_range(n_restarts, num_test_processes, std):
                        for _ in range(num_test_processes)]
 
     prior_seq = []
-    for idx in range(0, 100):
+    for idx in range(0, 3):
         friction = f_sin(idx)
         prior_seq.append(torch.tensor([[friction], [std ** 2]], dtype=torch.float32))
 
@@ -136,7 +140,6 @@ def get_sequences(n_restarts, num_test_processes, std):
     gp_list_sin, prior_seq_sin, init_prior_sin = get_sin_task_sequence_full_range(n_restarts, num_test_processes, std)
     gp_list_saw, prior_seq_saw, init_prior_saw = get_sawtooth_wave(n_restarts, num_test_processes, std)
     gp_list_tanh, prior_seq_tanh, init_prior_tanh = get_tanh(n_restarts, num_test_processes, std)
-
     # Fill lists
     p = [prior_seq_sin, prior_seq_saw, prior_seq_tanh]
     gp = [gp_list_sin, gp_list_saw, gp_list_tanh]

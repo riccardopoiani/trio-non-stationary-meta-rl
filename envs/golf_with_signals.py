@@ -69,7 +69,7 @@ class MiniGolfWithSignals(gym.Env):
             self.signals = ((self.max_pos - self.min_pos) / (1 - (-1))) * (signals - 1) + self.max_pos
 
     def get_signals_value(self, x):
-        return np.exp(-((x - self.signals) ** 2) / (self.env_std ** 2))
+        return np.abs(x - self.num_signals) + np.random.normal(size=self.num_signals)
 
     def step(self, action, render=False):
         action = np.clip(action, self.min_action, self.max_action / 2)

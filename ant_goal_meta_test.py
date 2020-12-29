@@ -86,7 +86,7 @@ def get_circuit_sequences(n_restarts, num_test_processes, var_seq):
     for idx in range(100):
         p_mean = []
         p_var = []
-        theta = root_theta(idx)
+        theta = root_theta(16 * idx)
         for dim in range(latent_dim):
             p_mean.append(f_radius(theta=theta, latent_dim=dim))
             p_var.append(std ** 2)

@@ -4,10 +4,10 @@ import os
 import pickle
 import argparse
 
-INPUT_FOLDER = "../../result/maml_test/golfmamltest/sequence1/"
-OUTPUT_FOLDER = "../../result/maml_test/golfmamltest/sequence1/"
-SEQ_NAME = "sawtooth"
-SEQ_LEN = 110
+INPUT_FOLDER = "../../result/final/maml/final_golf/sequence2/"
+OUTPUT_FOLDER = "../../result/final/maml/final_golf/sequence2/"
+SEQ_NAME = "tan"
+SEQ_LEN = 50
 NUM_STEPS = 5
 
 """
@@ -44,7 +44,7 @@ all_data = np.zeros(shape=(NUM_STEPS + 1, len(files_in_f), SEQ_LEN))
 for step in range(NUM_STEPS + 1):
     for policy_idx, file in enumerate(files_in_f):
         curr_res = np.load(INPUT_FOLDER + file)  # read results of the folder
-        assert SEQ_LEN == curr_res['valid_returns'].shape[0]
+        assert SEQ_LEN == curr_res['valid_returns'].shape[0], curr_res['valid_returns'].shape[0]
 
         # Select the data according to the correct adaptation step
         if step == NUM_STEPS:

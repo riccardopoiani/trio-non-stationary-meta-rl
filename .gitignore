@@ -1,6 +1,7 @@
 .DS_Store
 
 /result
+/final_test
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
