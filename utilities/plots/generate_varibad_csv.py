@@ -1,13 +1,23 @@
+import argparse
 import numpy as np
 import pandas as pd
 import pickle
 
-INPUT_FILE = "../../result/50run/varibad/cheetah/results_varibad_seq3.pkl"
-OUTPUT_FILE_MEAN = "../../result/50run/varibad/cheetah/varibad_seq3.csv"
-OUTPUT_FILE_CUMSUM = "../../result/50run/varibad/cheetah/varibad_cumsum_seq3.csv"
+parser = argparse.ArgumentParser()
+parser.add_argument("--input-file", type=str, required=True,
+                    help="Input folder of MAML result (the folder should contain only data of the given sequence)")
+parser.add_argument("--output-file", type=str, required=True,
+                    help="Where to store mean rewards")
+parser.add_argument("--output-file-cumulative", type=str, required=True,
+                    help="Where to store cumulative rewards file")
+
+args, rest_args = parser.parse_known_args()
+input_file = args.input_file
+output_file_mean = args.output_file
+output_file_cumsum = args.output_file_cumulative
 
 objects = []
-with (open(INPUT_FILE, "rb")) as openfile:
+with (open(input_file, "rb")) as openfile:
     while True:
         try:
             objects.append(pickle.load(openfile))
@@ -29,7 +39,7 @@ data[2] = np.arange(seq_len)
 
 df = pd.DataFrame(data.transpose())
 df.rename(columns={0: 'mean_varibad', 1: 'std_varibad', 2: 'task'}, inplace=True)
-df.to_csv(OUTPUT_FILE_MEAN, index=False)
+df.to_csv(output_file_mean, index=False)
 
 # Generate cumulative rewards
 data = np.zeros((3, seq_len))
@@ -40,4 +50,4 @@ data[2] = np.arange(seq_len)
 
 df = pd.DataFrame(data.transpose())
 df.rename(columns={0: 'mean_varibad', 1: 'std_varibad', 2: 'task'}, inplace=True)
-df.to_csv(OUTPUT_FILE_CUMSUM, index=False)
+df.to_csv(output_file_cumsum, index=False)

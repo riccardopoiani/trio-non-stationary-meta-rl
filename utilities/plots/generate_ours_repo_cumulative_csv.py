@@ -2,14 +2,14 @@ import pandas as pd
 import numpy as np
 import pickle
 
-INPUT_FILE = "../../result/50run/ours/newchetah/data_results.pkl"
-OUTPUT_FOLDER = "../../result/50run/ours/newchetah/"
+INPUT_FILE = "../../result/50run/bayes/cheetah/data_results.pkl"
+OUTPUT_FOLDER = "../../result/50run/bayes/cheetah/"
 
-label_list = ['Ours', 'TS', 'RL2']
+label_list = ['bayes', 'TS', 'RL2']
 has_track_list = [True, True, False]
-num_seq = 2
-seq_len_list = [2, 150]
-sequence_name_list = ["sintan2", "quad150"]
+num_seq = 2 # number of sequences present in the file being read
+seq_len_list = [100, 150] # sequence len for each of the sequence present in the file
+sequence_name_list = ["sintan", "doublestep"] # name of the sequences
 
 objects = []
 with (open(INPUT_FILE, "rb")) as openfile:

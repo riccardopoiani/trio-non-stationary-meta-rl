@@ -11,7 +11,7 @@ from configs import cheetah_bayes_arguments, cheetah_rl2_arguments, cheetah_ts_a
     golf_with_signals_bayes_arguments
 
 from inference.inference_network import EmbeddingInferenceNetwork, InferenceNetwork
-from learner.ours import OursAgent
+from learner.bayes import BayesAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
 from task.cheetah_vel_task_generator import CheetahVelTaskGenerator
@@ -29,7 +29,7 @@ def main():
     # Task family settings
     parser = argparse.ArgumentParser()
     parser.add_argument('--env-type')
-    parser.add_argument('--algo', default='rl2', help="choose in {'rl2', 'ours', 'ts'}")
+    parser.add_argument('--algo', default='rl2', help="choose in {'rl2', 'bayes', 'ts'}")
     parser.add_argument('--golf-num-signals', type=int, default=None)
     args, rest_args = parser.parse_known_args()
     env = args.env_type
@@ -43,14 +43,14 @@ def main():
     if env == "cheetah_vel":
         if algo == "rl2":
             args = cheetah_rl2_arguments.get_args(rest_args)
-        elif algo == "ours":
+        elif algo == "bayes":
             args = cheetah_bayes_arguments.get_args(rest_args)
         elif algo == "ts":
             args = cheetah_ts_arguments.get_args(rest_args)
     elif env == "golf" or env == "golf_signals":
         if algo == "rl2":
             args = golf_rl2_arguments.get_args(rest_args)
-        elif algo == "ours":
+        elif algo == "bayes":
             if env == "golf" or golf_num_signals <= 1:
                 args = golf_bayes_arguments.get_args(rest_args)
             else:
@@ -60,7 +60,7 @@ def main():
     elif env == "ant_goal":
         if algo == "rl2":
             args = ant_goal_rl2_arguments.get_args(rest_args)
-        elif algo == "ours":
+        elif algo == "bayes":
             args = ant_goal_bayes_arguments.get_args(rest_args)
         elif algo == "ts":
             args = ant_goal_ts_arguments.get_args(rest_args)
@@ -329,7 +329,7 @@ def main():
         with open("{}eval_opt.pkl".format(folder_path_with_date), "wb") as output:
             pickle.dump(eval_opt, output)
 
-    elif algo == "ours":
+    elif algo == "bayes":
         vae_min_seq = 1
         vae_max_seq = args.vae_max_steps
 
@@ -354,45 +354,45 @@ def main():
                                            hidden_size_dim=args.vae_gru_dim)
         vi_optim = torch.optim.Adam(vi.parameters(), lr=args.vae_lr)
 
-        agent = OursAgent(action_space=action_space, device=device, gamma=args.gamma,
-                          num_steps=args.num_steps, num_processes=args.num_processes,
-                          clip_param=args.clip_param, ppo_epoch=args.ppo_epoch,
-                          num_mini_batch=args.num_mini_batch,
-                          value_loss_coef=args.value_loss_coef,
-                          entropy_coef=args.entropy_coef,
-                          lr=args.ppo_lr,
-                          eps=args.ppo_eps, max_grad_norm=args.max_grad_norm,
-                          use_linear_lr_decay=args.use_linear_lr_decay,
-                          use_gae=args.use_gae,
-                          gae_lambda=args.gae_lambda,
-                          use_proper_time_limits=args.use_proper_time_limits,
-                          obs_shape=obs_shape,
-                          latent_dim=latent_dim,
-                          recurrent_policy=args.recurrent,
-                          hidden_size=args.hidden_size,
-                          use_elu=args.use_elu,
-                          variational_model=vi,
-                          vae_optim=vi_optim,
-                          vae_min_seq=vae_min_seq,
-                          vae_max_seq=vae_max_seq,
-                          max_sigma=prior_std_max,
-                          use_decay_kld=args.use_decay_kld,
-                          decay_kld_rate=args.decay_kld_rate,
-                          env_dim=state_dim,
-                          action_dim=action_dim,
-                          min_sigma=prior_std_min,
-                          use_xavier=args.use_xavier,
-                          use_rms_obs=args.use_rms_obs,
-                          use_rms_latent=args.use_rms_latent,
-                          use_feature_extractor=args.use_feature_extractor,
-                          state_extractor_dim=args.state_extractor_dim,
-                          latent_extractor_dim=args.latent_extractor_dim,
-                          uncertainty_extractor_dim=args.uncertainty_extractor_dim,
-                          use_huber_loss=args.use_huber_loss,
-                          detach_every=args.detach_every,
-                          use_rms_rew=args.use_rms_rew,
-                          decouple_rms=args.decouple_rms_latent
-                          )
+        agent = BayesAgent(action_space=action_space, device=device, gamma=args.gamma,
+                           num_steps=args.num_steps, num_processes=args.num_processes,
+                           clip_param=args.clip_param, ppo_epoch=args.ppo_epoch,
+                           num_mini_batch=args.num_mini_batch,
+                           value_loss_coef=args.value_loss_coef,
+                           entropy_coef=args.entropy_coef,
+                           lr=args.ppo_lr,
+                           eps=args.ppo_eps, max_grad_norm=args.max_grad_norm,
+                           use_linear_lr_decay=args.use_linear_lr_decay,
+                           use_gae=args.use_gae,
+                           gae_lambda=args.gae_lambda,
+                           use_proper_time_limits=args.use_proper_time_limits,
+                           obs_shape=obs_shape,
+                           latent_dim=latent_dim,
+                           recurrent_policy=args.recurrent,
+                           hidden_size=args.hidden_size,
+                           use_elu=args.use_elu,
+                           variational_model=vi,
+                           vae_optim=vi_optim,
+                           vae_min_seq=vae_min_seq,
+                           vae_max_seq=vae_max_seq,
+                           max_sigma=prior_std_max,
+                           use_decay_kld=args.use_decay_kld,
+                           decay_kld_rate=args.decay_kld_rate,
+                           env_dim=state_dim,
+                           action_dim=action_dim,
+                           min_sigma=prior_std_min,
+                           use_xavier=args.use_xavier,
+                           use_rms_obs=args.use_rms_obs,
+                           use_rms_latent=args.use_rms_latent,
+                           use_feature_extractor=args.use_feature_extractor,
+                           state_extractor_dim=args.state_extractor_dim,
+                           latent_extractor_dim=args.latent_extractor_dim,
+                           uncertainty_extractor_dim=args.uncertainty_extractor_dim,
+                           use_huber_loss=args.use_huber_loss,
+                           detach_every=args.detach_every,
+                           use_rms_rew=args.use_rms_rew,
+                           decouple_rms=args.decouple_rms_latent
+                           )
 
         res_eval, res_vae, test_list, final_test = agent.train(training_iter=args.training_iter,
                                                                env_name=env_name,

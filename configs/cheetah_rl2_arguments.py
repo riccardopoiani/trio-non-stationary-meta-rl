@@ -2,9 +2,6 @@ import argparse
 
 import torch
 
-"""
-taskset -c 0-43 python3.5 train_cheetah_vel.py --algo rl2   --folder rl2huber --training-iter 15800 --gamma 0.995 --num-processes 16 --num-test-processes 1 --hidden-size 128 --ppo-lr 0.0007 --ppo-eps 1e-8 --ppo-epoch 2 --num-mini-batch 4 --use-elu 0 --num-steps 400 --clip-param 0.1 --decay-kld-rate 1 --eval-interval 100 --num-random-task-to-eval 32 --entropy-coef 0.01 --use-proper-time-limits 1 --use-gae 1 --gae_lambda 0.95 --use-rms-obs 0 --task-len 1 --use-done 0 --use-feature-extractor 1 --rl2-reward-emb-dim 16 --rl2-action-emb-dim 16 --rl2-state-emb-dim 32 --use-rms-rew 1 --use-rms-obs 0 --use-rms-act 0 --use-rms-rew-in-policy 0  --use-huber-loss 1 --seed 
-"""
 
 
 def get_args(rest_args):

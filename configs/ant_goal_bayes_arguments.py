@@ -2,11 +2,6 @@ import argparse
 
 import torch
 
-"""
-Fixed with this settings + default arguments
-taskset -c 44-63 python3.5 train_ant_goal.py --algo ours --folder ours1batch --training-iter 31250 --gamma 0.995 --num-processes 16 --num-test-processes 1 --hidden-size 128 --ppo-lr 0.0005 --ppo-eps 1e-8 --ppo-epoch 2 --num-mini-batch 1 --use-elu 0 --num-steps 200 --clip-param 0.1 --decay-kld-rate 0.1 --vae-smart 1 --eval-interval 100 --num-random-task-to-eval 32 --entropy-coef 0.01 --use-proper-time-limits 1 --init-vae-steps 7500 --use-gae 1 --gae_lambda 0.95 --use-rms-obs 1 --use-rms-latent 1 --use-rms-rew 1 --decouple-rms-latent 0 --use-feature-extractor 1 --state-extractor-dim 80 --latent-extractor-dim 46 --uncertainty-extractor-dim 2 --vae-gru-dim 128 --vae-action-emb-dim 32 --vae-state-emb-dim 64 --vae-reward-emb-dim 32 --vae-prior-emb-dim 2 --task-len 1 --use-huber-loss 1 --detach-every 50 --seed
-"""
-
 
 def get_args(rest_args):
     parser = argparse.ArgumentParser(description="AL")

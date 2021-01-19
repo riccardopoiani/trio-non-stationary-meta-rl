@@ -136,11 +136,9 @@ class EmbeddingInferenceNetwork(torch.nn.Module):
         elif use_prev_state and self.h is not None:
             t, self.h = self.enc2(context, self.h)
             t = t[:, -1, :]  # we are interested only in the last output of the sequence
-            # print(t.shape)
         else:
             t, self.h = self.enc2(context)
             t = t[:, -1, :]  # we are interested only in the last output of the sequence
-            # print(t.shape)
 
         t = F.elu(t)
 

@@ -2,9 +2,7 @@ import argparse
 
 import torch
 
-"""
-RUN  taskset -c 0-43 python3.5 train_mini_golf.py --algo rl2 --folder rl2maystable --training-iter 17000 --gamma 0.99 --num-processes 32 --num-test-processes 1 --eval-interval 300 --ppo-lr 0.00005 --clip-param 0.1 --hidden-size 16 --num-steps 60 --task-len 4 --use-done 1 --rl2-latent-dim 4 --use-elu 0 --use-rms-rew 1 --seed 
-"""
+
 def get_args(rest_args):
     parser = argparse.ArgumentParser(description="AL")
 

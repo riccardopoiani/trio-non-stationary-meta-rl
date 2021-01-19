@@ -11,7 +11,7 @@ from ppo.storage import RolloutStorage
 from utilities.observation_utils import augment_obs_posterior, get_posterior
 
 
-class OursAgent:
+class BayesAgent:
 
     def __init__(self,
                  action_space,
@@ -610,7 +610,7 @@ class OursAgent:
 
         for seq_idx, s in enumerate(prior_sequences):
             env_kwargs_list = [task_generator.sample_task_from_prior(s[i]) for i in range(len(s))]
-            print("ID {} SEQ {} TRUE".format(t_id, seq_idx))
+
             r, posterior_history, prediction_mean = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size,
                                                                             env_name, seed, log_dir,
                                                                             env_kwargs_list,
@@ -624,7 +624,6 @@ class OursAgent:
             prediction_mean_true.append(prediction_mean)
             posterior_history_true.append(posterior_history)
 
-            print("ID {} SEQ {} FALSE".format(t_id, seq_idx))
             r, posterior_history, prediction_mean = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size,
                                                                             env_name, seed, log_dir,
                                                                             env_kwargs_list,
@@ -637,7 +636,6 @@ class OursAgent:
             posterior_history_false.append(posterior_history)
             prediction_mean_false.append(prediction_mean)
 
-            print("ID {} SEQ {} PRIOR".format(t_id, seq_idx))
             r, _, _ = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size, env_name, seed, log_dir,
                                               env_kwargs_list, init_prior_sequences[seq_idx],
                                               use_env_obs, num_eval_processes,
@@ -645,7 +643,6 @@ class OursAgent:
                                               use_real_prior=True, true_prior_sequence=s)
             r_all_real_prior.append(r)
 
-            print("ID {} SEQ {} NO TRACK".format(t_id, seq_idx))
             r, _, _ = self.test_task_sequence(gp_list_sequences[seq_idx], sw_size, env_name, seed, log_dir,
                                               env_kwargs_list, init_prior_sequences[seq_idx],
                                               use_env_obs, num_eval_processes,

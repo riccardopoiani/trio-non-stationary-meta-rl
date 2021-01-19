@@ -8,23 +8,19 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel, DotProduct
 
 from configs import ant_goal_ts_arguments, ant_goal_bayes_arguments, ant_goal_rl2_arguments
-from learner.ours import OursAgent
+from learner.bayes import BayesAgent
 from learner.posterior_ts_opt import PosteriorOptTSAgent
 from learner.recurrent import RL2
 from task.ant_goal_task_generator import AntGoalTaskGenerator
 from utilities.folder_management import handle_folder_creation
-from utilities.plots.plots import create_csv_rewards, create_csv_tracking, view_results_multiple_dim
+from utilities.plots.plots import create_csv_rewards, create_csv_tracking
 from utilities.test_arguments import get_test_args
-
-import warnings
-
-warnings.filterwarnings(action='ignore')
 
 folder = "result/metatest/antgoal/"
 env_name = "antgoal-v0"
-folder_list = ["result/antgoal/ours300/", "result/antgoal/rl2huberfairdata/", "result/antgoal/tsvae/"]
-algo_list = ['ours', 'rl2', 'ts_opt']
-label_list = ['ours', 'rl2', 'ts_opt']
+folder_list = ["result/antgoal/bayes/", "result/antgoal/rl2/", "result/antgoal/ts/"]
+algo_list = ['bayes', 'rl2', 'ts_opt']
+label_list = ['bayes', 'rl2', 'ts_opt']
 has_track_list = [True, False, True]
 store_history_list = [True, False, True]
 
@@ -200,52 +196,52 @@ def get_meta_test(algo, gp_list_sequences, sw_size, prior_sequences, init_prior_
         agent.actor_critic = model
         res = agent.meta_test(prior_sequences, task_generator, num_eval_processes, env_name, seed, log_dir,
                               task_len)
-    elif algo == "ours":
+    elif algo == "bayes":
         algo_args = ant_goal_bayes_arguments.get_args(rest_args)
-        agent = OursAgent(action_space=action_space,
-                          device=device,
-                          gamma=algo_args.gamma,
-                          num_steps=algo_args.num_steps,
-                          num_processes=algo_args.num_processes,
-                          clip_param=algo_args.clip_param,
-                          ppo_epoch=algo_args.ppo_epoch,
-                          num_mini_batch=algo_args.num_mini_batch,
-                          value_loss_coef=algo_args.value_loss_coef,
-                          entropy_coef=algo_args.entropy_coef,
-                          lr=algo_args.ppo_lr,
-                          eps=algo_args.ppo_eps,
-                          max_grad_norm=algo_args.max_grad_norm,
-                          use_linear_lr_decay=algo_args.use_linear_lr_decay,
-                          use_gae=algo_args.use_gae,
-                          gae_lambda=algo_args.gae_lambda,
-                          use_proper_time_limits=algo_args.use_proper_time_limits,
-                          obs_shape=(2 * latent_dim + state_dim,),
-                          latent_dim=latent_dim,
-                          recurrent_policy=algo_args.recurrent,
-                          hidden_size=algo_args.hidden_size,
-                          use_elu=algo_args.use_elu,
-                          variational_model=None,
-                          vae_optim=None,
-                          vae_min_seq=1,
-                          vae_max_seq=algo_args.vae_max_steps,
-                          max_sigma=prior_std_max,
-                          use_decay_kld=algo_args.use_decay_kld,
-                          decay_kld_rate=algo_args.decay_kld_rate,
-                          env_dim=state_dim,
-                          action_dim=action_dim,
-                          min_sigma=prior_std_min,
-                          use_xavier=algo_args.use_xavier,
-                          use_rms_obs=algo_args.use_rms_obs,
-                          use_rms_latent=algo_args.use_rms_latent,
-                          use_feature_extractor=algo_args.use_feature_extractor,
-                          state_extractor_dim=algo_args.state_extractor_dim,
-                          latent_extractor_dim=algo_args.latent_extractor_dim,
-                          uncertainty_extractor_dim=algo_args.uncertainty_extractor_dim,
-                          use_huber_loss=algo_args.use_huber_loss,
-                          detach_every=algo_args.detach_every,
-                          use_rms_rew=algo_args.use_rms_rew,
-                          decouple_rms=algo_args.decouple_rms_latent
-                          )
+        agent = BayesAgent(action_space=action_space,
+                           device=device,
+                           gamma=algo_args.gamma,
+                           num_steps=algo_args.num_steps,
+                           num_processes=algo_args.num_processes,
+                           clip_param=algo_args.clip_param,
+                           ppo_epoch=algo_args.ppo_epoch,
+                           num_mini_batch=algo_args.num_mini_batch,
+                           value_loss_coef=algo_args.value_loss_coef,
+                           entropy_coef=algo_args.entropy_coef,
+                           lr=algo_args.ppo_lr,
+                           eps=algo_args.ppo_eps,
+                           max_grad_norm=algo_args.max_grad_norm,
+                           use_linear_lr_decay=algo_args.use_linear_lr_decay,
+                           use_gae=algo_args.use_gae,
+                           gae_lambda=algo_args.gae_lambda,
+                           use_proper_time_limits=algo_args.use_proper_time_limits,
+                           obs_shape=(2 * latent_dim + state_dim,),
+                           latent_dim=latent_dim,
+                           recurrent_policy=algo_args.recurrent,
+                           hidden_size=algo_args.hidden_size,
+                           use_elu=algo_args.use_elu,
+                           variational_model=None,
+                           vae_optim=None,
+                           vae_min_seq=1,
+                           vae_max_seq=algo_args.vae_max_steps,
+                           max_sigma=prior_std_max,
+                           use_decay_kld=algo_args.use_decay_kld,
+                           decay_kld_rate=algo_args.decay_kld_rate,
+                           env_dim=state_dim,
+                           action_dim=action_dim,
+                           min_sigma=prior_std_min,
+                           use_xavier=algo_args.use_xavier,
+                           use_rms_obs=algo_args.use_rms_obs,
+                           use_rms_latent=algo_args.use_rms_latent,
+                           use_feature_extractor=algo_args.use_feature_extractor,
+                           state_extractor_dim=algo_args.state_extractor_dim,
+                           latent_extractor_dim=algo_args.latent_extractor_dim,
+                           uncertainty_extractor_dim=algo_args.uncertainty_extractor_dim,
+                           use_huber_loss=algo_args.use_huber_loss,
+                           detach_every=algo_args.detach_every,
+                           use_rms_rew=algo_args.use_rms_rew,
+                           decouple_rms=algo_args.decouple_rms_latent
+                           )
         agent.actor_critic = model
         agent.vae = vi
         res = agent.meta_test_sequences(gp_list_sequences=gp_list_sequences,
@@ -363,19 +359,19 @@ device = torch.device("cuda:0" if args.cuda else "cpu")
 
 seeds = [np.random.randint(1000000) for _ in range(100)]
 
-r_ours = []
+r_bayes = []
 r_ts = []
 r_rl2 = []
 
 for algo, f, sh in zip(algo_list, folder_list, store_history_list):
-    if algo == 'ours':
+    if algo == 'bayes':
         model_list = []
         vi_list = []
         dirs_containing_res = os.listdir(f)
         for d in dirs_containing_res:
             model_list.append(torch.load(f + d + "/agent_ac"))
             vi_list.append(torch.load(f + d + "/agent_vi"))
-        r_ours = (Parallel(n_jobs=args.n_jobs, backend='loky')(
+        r_bayes = (Parallel(n_jobs=args.n_jobs, backend='loky')(
             delayed(run)(id=id, seed=seed, args=args, model=model, vi=vi, algo=algo, store=sh, rest_args=rest_args)
             for id, seed, model, vi in zip(range(len(model_list)), seeds, model_list, vi_list)))
     elif algo == "ts_opt":
@@ -399,7 +395,7 @@ for algo, f, sh in zip(algo_list, folder_list, store_history_list):
 
 print("END ALL RUNS")
 
-meta_test_res = [r_ours, r_ts, r_rl2]
+meta_test_res = [r_bayes, r_ts, r_rl2]
 with open("temp.pkl", "wb") as output:
     import pickle
 
@@ -417,7 +413,7 @@ if args.dump_data:
         pickle.dump(meta_test_res, output)
 
 create_csv_rewards(r_list=meta_test_res,
-                   label_list=['Ours', 'TS', 'RL'],
+                   label_list=['bayes', 'TS', 'RL'],
                    has_track_list=[True, True, False],
                    num_seq=num_seq,
                    prior_seqs=prior_sequences,
@@ -426,7 +422,7 @@ create_csv_rewards(r_list=meta_test_res,
                    folder_path_with_date=folder_path_with_date)
 
 create_csv_tracking(r_list=meta_test_res,
-                    label_list=['Ours', 'TS', 'RL2'],
+                    label_list=['bayes', 'TS', 'RL2'],
                     has_track_list=[True, True, False],
                     num_seq=num_seq,
                     prior_seqs=prior_sequences,
