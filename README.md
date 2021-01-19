@@ -30,7 +30,8 @@ of `golf_signals`, you can specify the number of additional latent variables as 
 Policy and inference networks will be automatically stored in `result/env_name/algo_name/current_timestamp/`.<br> <br>
 
 Once you have trained a policy for a given environment, you can launch the meta-testing script on its meta-test
-sequences. For instance, you can type `python ant_goal_meta_test.py --task-len 1 --num-test-processes 20 --n-jobs 1`. 
+sequences. For instance, you can type `python ant_goal_meta_test.py --task-len 1 --num-test-processes 50 --n-jobs 1`. 
+`--task-len 1` should be set to `1` for MuJoCo experiments, and `4` for MiniGolf. 
 If you trained more policy for each environment, each policy of each algorithm will be used for the tested 
 environment, results will be averaged and stored on a CSV file together with the standard deviations. Moreover,
 raw data will be dumped on a 'pickle' file. Default folder will be `result/metatest/env/curr_timestamp/`. <br>
