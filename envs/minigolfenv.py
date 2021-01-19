@@ -74,7 +74,6 @@ class MiniGolf(gym.Env):
 
         self.state = xn
 
-        # TODO the last three values should not be used
         return self.get_state(), float(reward), done, {}
 
     def reset(self, state=None):

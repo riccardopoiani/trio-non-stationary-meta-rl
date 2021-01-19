@@ -4,10 +4,10 @@ import os
 import pickle
 import argparse
 
-INPUT_FOLDER = "../../result/final/maml/final_golf/sequence2/"
-OUTPUT_FOLDER = "../../result/final/maml/final_golf/sequence2/"
-SEQ_NAME = "tan"
-SEQ_LEN = 50
+INPUT_FOLDER = "../../result/50run/maml/cheetah/sequence3/"
+OUTPUT_FOLDER = "../../result/50run/maml/cheetah/sequence3/"
+SEQ_NAME = "quad150"
+SEQ_LEN = 150
 NUM_STEPS = 5
 
 """
@@ -81,3 +81,29 @@ for step in range(NUM_STEPS + 1):
 
     # Print the mean of the rewards for the current step in order to select the adaptation step with the better results
     print("Step {} -> Mean = {}".format(step, np.mean(all_data[step, :, :])))
+
+# GENERATE CUMULATIVE REWARD CSV
+cum_sum = np.cumsum(all_data, 2)
+for step in range(NUM_STEPS + 1):
+    mean_data = np.zeros(shape=(2, SEQ_LEN))
+    std_data = np.zeros(shape=(2, SEQ_LEN))
+    mean_data[-1] = np.arange(SEQ_LEN)
+    std_data[-1] = np.arange(SEQ_LEN)
+    mean_data[0] = np.mean(cum_sum[step, :, :], 0)
+    std_data[0] = np.std(cum_sum[step, :, :], 0)
+
+    mean_df = pd.DataFrame(mean_data.transpose())
+    std_df = pd.DataFrame(std_data.transpose())
+
+    # Rename columns
+    mean_df.rename(columns={1: "task"}, inplace=True)
+    std_df.rename(columns={1: "task"}, inplace=True)
+    mean_df.rename(columns={0: "mean_reward_maml_step_{}".format(step)}, inplace=True)
+    std_df.rename(columns={0: "std_reward_maml_step_{}".format(step)}, inplace=True)
+
+    # Merge DF and dump on files
+    total_df = mean_df.merge(std_df, left_on="task", right_on="task")
+    total_df.to_csv("{}{}_cumrewards_step_{}.csv".format(OUTPUT_FOLDER, SEQ_NAME, step), index=False)
+
+    # Print the mean of the rewards for the current step in order to select the adaptation step with the better results
+    print("Step {} -> CumMean = {}".format(step, np.mean(cum_sum[step, :, :])))
