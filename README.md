@@ -36,7 +36,12 @@ If you trained more policy for each environment, each policy of each algorithm w
 environment, results will be averaged and stored on a CSV file together with the standard deviations. Moreover,
 raw data will be dumped on a 'pickle' file. Default folder will be `result/metatest/env/curr_timestamp/`. <br>
 Please, note that meta-test scripts assumes that you trained at least a policy for each of the 3 algorithms: if this was
-not the case, you may want to modify a bit the script. <br> <br>
+not the case, you may want to modify a bit the script.
+The scripts requires that the input folder for each of the algorithm (i.e. bayes, ts, and rl2) are folders
+containing at least a folder obtained via the training scripts. 
+Also, if you stored results in different folders, you need to specify the correct folders where to training
+policies. 
+<br> <br>
 
 For what concerns results MAML and VariBAD, we used the code available at
 [tristandeleu/pytorch-maml-rl](https://github.com/tristandeleu/pytorch-maml-rl) and 
