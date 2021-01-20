@@ -99,7 +99,6 @@ class MiniGolfWithSignals(gym.Env):
         if self.signals is not None:
             self.state[1:] = self.get_signals_value(self.state[0])
 
-        # TODO the last three values should not be used
         return self.get_state(), float(reward), done, {}
 
     def reset(self, state=None):
