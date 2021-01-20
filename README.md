@@ -32,8 +32,11 @@ Policy and inference networks will be automatically stored in `result/env_name/a
 Once you have trained a policy for a given environment, you can launch the meta-testing script on its meta-test
 sequences. For instance, you can type `python ant_goal_meta_test.py --task-len 1 --num-test-processes 50 --n-jobs 1`. 
 `--task-len 1` should be set to `1` for MuJoCo experiments, and `4` for MiniGolf. `--bayes-folder`, `--ts-folder` and 
-`--rl2-folder` is used to specify the folders in which training policies and inference networks are stored.
-`--output-folder` is used to specify the folders in which results will be stored. <br>
+`--rl2-folder` are used to specify the folders in which training policies and inference networks are stored. 
+`--output-folder` is used to specify the folders in which results will be stored. 
+When running the MiniGolf robustness experiment, `--bayes-sigx-folder` is used to specify the folder of TRIO-Bayes
+trained on the environment with `x` additional signals. For `x=0` use `--bayes-folder`.
+<br>
 If you trained more policy for each environment, each policy of each algorithm will be used for the tested 
 environment, results will be averaged and stored on a CSV file together with the standard deviations. Moreover,
 raw data will be dumped on a 'pickle' file. <br>
