@@ -3,7 +3,7 @@ import os
 import torch
 import numpy as np
 
-from ppo.envs import VecNormalize
+from ppo_a2c.envs import VecNormalize
 
 """
 Code taken from: https://github.com/ikostrikov/pytorch-a2c-ppo-acktr-gail

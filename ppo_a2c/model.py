@@ -6,8 +6,8 @@ and https://github.com/lmzintgraf/varibad
 import numpy as np
 import torch
 
-from ppo.distributions import Categorical, DiagGaussian, Bernoulli
-from ppo.utils import init, xavier_weights_init
+from ppo_a2c.distributions import Categorical, DiagGaussian, Bernoulli
+from ppo_a2c.utils import init, xavier_weights_init
 from utilities.observation_utils import RunningMeanStd
 
 

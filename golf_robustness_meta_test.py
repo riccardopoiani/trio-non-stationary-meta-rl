@@ -16,12 +16,7 @@ from utilities.plots.plots import create_csv_rewards
 from utilities.test_arguments import get_test_args
 
 # General parameters
-folder = "result/metatest/minigolfrobust/"
 env_name = 'golfsignals-v0'
-folder_list = ["result/golf_sig_3/bayes/", # keep this "order" if your results are stored in different folders
-               "result/golf_sig_2/bayes/",
-               "result/golf_sig_1/bayes/",
-               "result/golf/bayes/"]
 algo_list = ['bayes', 'bayes', 'bayes', 'bayes']
 label_list = ['bayes_3', 'bayes_2', 'bayes_1', 'bayes_0']
 action_dim = 1
@@ -262,6 +257,10 @@ r_bayes_1 = []
 r_bayes_2 = []
 r_bayes_3 = []
 
+
+folder_list = [args.bayes_sig3_folder, args.bayes_sig2_folder, args.bayes_sig1_folder, args.bayes_folder]
+output_folder = args.output_folder
+
 for algo, f, sh, num_sig in zip(algo_list, folder_list, store_history_list, num_signals_list):
     if algo == 'bayes':
         model_list = []
@@ -295,7 +294,7 @@ prior_sequences, gp_list_sequences, init_prior = get_sequences(n_restarts=args.n
                                                                std=noise_seq_var ** (1 / 2),
                                                                num_sig=0)
 
-fd, folder_path_with_date = handle_folder_creation(result_path=folder)
+fd, folder_path_with_date = handle_folder_creation(result_path=output_folder)
 
 if args.dump_data:
     with open("{}data_results.pkl".format(folder_path_with_date), "wb") as output:

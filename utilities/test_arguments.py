@@ -28,6 +28,27 @@ def get_test_args():
     parser.add_argument('--cuda-deterministic', action='store_true', default=False,
                         help="sets flags for determinism when using CUDA (potentially slow!)")
 
+    # Folder parameters
+    parser.add_argument('--rl2-folder', default=None,
+                        type=str, help="folder that contains folders of rl2 training results")
+    parser.add_argument('--ts-folder', default=None,
+                        type=str, help="folder that contains folders of ts training results")
+    parser.add_argument('--bayes-folder', default=None,
+                        type=str, help="folder that contains folders of bayes training results")
+
+    parser.add_argument('--bayes-sig1-folder', default=None,
+                        type=str, help="folder that contains folders of bayes training results for "
+                                       "minigolf with 1 additional signal")
+    parser.add_argument('--bayes-sig2-folder', default=None,
+                        type=str, help="folder that contains folders of bayes training results for "
+                                       "minigolf with 2 additional signals")
+    parser.add_argument('--bayes-sig3-folder', default=None,
+                        type=str, help="folder that contains folders of bayes training results "
+                                       "for minigolf with 3 additional signals")
+
+    parser.add_argument('--output-folder', default=None, required=True,
+                        type=str, help="Folder where to store results")
+
     args, rest_args = parser.parse_known_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 

@@ -17,11 +17,7 @@ from utilities.folder_management import handle_folder_creation
 from utilities.plots.plots import create_csv_rewards, create_csv_tracking
 from utilities.test_arguments import get_test_args
 # General parameters
-folder = "result/metatest/minigolf/"
 env_name = "golf-v0"
-folder_list = ["result/golf/bayes/", # keep this "order" if your results are stored in different folders
-               "result/golf/ts/",
-               "result/golf/rl2/"]
 algo_list = ['bayes', 'ts_opt', 'rl2']
 label_list = ['bayes', 'ts_opt', 'rl2']
 latent_dim = 1
@@ -358,6 +354,9 @@ r_bayes = []
 r_ts = []
 r_rl2 = []
 
+folder_list = [args.bayes_folder, args.ts_folder, args.rl2_folder]
+output_folder = args.output_folder
+
 for algo, f, sh in zip(algo_list, folder_list, store_history_list):
     if algo == 'bayes':
         model_list = []
@@ -397,7 +396,7 @@ prior_sequences, gp_list_sequences, init_prior = get_sequences(n_restarts=args.n
                                                                num_test_processes=args.num_test_processes,
                                                                std=noise_seq_var ** (1 / 2))
 
-fd, folder_path_with_date = handle_folder_creation(result_path=folder)
+fd, folder_path_with_date = handle_folder_creation(result_path=output_folder)
 
 if args.dump_data:
     with open("{}data_results.pkl".format(folder_path_with_date), "wb") as output:
