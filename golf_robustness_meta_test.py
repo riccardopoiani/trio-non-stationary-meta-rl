@@ -18,9 +18,9 @@ from utilities.test_arguments import get_test_args
 # General parameters
 folder = "result/metatest/minigolfrobust/"
 env_name = 'golfsignals-v0'
-folder_list = ["result/golf_robust/golf_sig_3/bayessig3/",
-               "result/golf_robust/golf_sig_2/bayessig2/",
-               "result/golf_robust/golf_sig_1/bayessig1/",
+folder_list = ["result/golf_sig_3/bayes/", # keep this "order" if your results are stored in different folders
+               "result/golf_sig_2/bayes/",
+               "result/golf_sig_1/bayes/",
                "result/golf/bayes/"]
 algo_list = ['bayes', 'bayes', 'bayes', 'bayes']
 label_list = ['bayes_3', 'bayes_2', 'bayes_1', 'bayes_0']
@@ -38,7 +38,7 @@ action_space = spaces.Box(low=min_action,
                           high=max_action,
                           shape=(1,))
 
-num_seq = 3
+num_seq = 2
 seq_len_list = [100, 110]
 sequence_name_list = ['sin', 'sawtooth']
 

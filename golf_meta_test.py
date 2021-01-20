@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import os
+import pickle
 import envs
 from gym import spaces
 from joblib import Parallel, delayed
@@ -18,7 +19,7 @@ from utilities.test_arguments import get_test_args
 # General parameters
 folder = "result/metatest/minigolf/"
 env_name = "golf-v0"
-folder_list = ["result/golf/bayes/",
+folder_list = ["result/golf/bayes/", # keep this "order" if your results are stored in different folders
                "result/golf/ts/",
                "result/golf/rl2/"]
 algo_list = ['bayes', 'ts_opt', 'rl2']
@@ -390,10 +391,6 @@ for algo, f, sh in zip(algo_list, folder_list, store_history_list):
 print("END ALL RUNS")
 
 meta_test_res = [r_bayes, r_ts, r_rl2]
-with open("temp.pkl", "wb") as output:
-    import pickle
-
-    pickle.dump(meta_test_res, output)
 
 # Create python plots from meta-test results
 prior_sequences, gp_list_sequences, init_prior = get_sequences(n_restarts=args.n_restarts_gp,

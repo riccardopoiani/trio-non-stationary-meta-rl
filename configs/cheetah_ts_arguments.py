@@ -89,7 +89,7 @@ def get_args(rest_args):
     parser.add_argument('--num-processes', type=int, default=16,
                         help="number of envs that will be run in parallalel")
     parser.add_argument('--verbose', type=lambda x: int(x) != 0, default=True)
-    parser.add_argument('--folder', type=str, default="bayes")
+    parser.add_argument('--folder', type=str, default="")
     parser.add_argument('--task-len', type=int, default=1,
                         help="Number of episodes at meta-test time of the same task")
 

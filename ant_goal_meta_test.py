@@ -18,7 +18,7 @@ from utilities.test_arguments import get_test_args
 
 folder = "result/metatest/antgoal/"
 env_name = "antgoal-v0"
-folder_list = ["result/antgoal/bayes/", "result/antgoal/rl2/", "result/antgoal/ts/"]
+folder_list = ["result/antgoal/bayes/", "result/antgoal/rl2/", "result/antgoal/ts/"] # keep this "order" if your results are stored in different folders
 algo_list = ['bayes', 'rl2', 'ts_opt']
 label_list = ['bayes', 'rl2', 'ts_opt']
 has_track_list = [True, False, True]

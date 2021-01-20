@@ -176,7 +176,9 @@ def main():
             obs_dim = state_dim + action_dim + 1
         else:
             obs_dim = action_dim + 1
-        obs_shape = (obs_dim,)  # 2 obs_shape + 2 action_shape + 1 reward
+        if args.use_done:
+            obs_dim += 1
+        obs_shape = (obs_dim,)
 
         agent = RL2(hidden_size=args.hidden_size,
                     use_elu=args.use_elu,

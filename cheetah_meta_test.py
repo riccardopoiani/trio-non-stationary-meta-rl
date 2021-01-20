@@ -18,7 +18,7 @@ from utilities.test_arguments import get_test_args
 
 folder = "result/metatest/cheetahvelv2/"
 env_name = "cheetahvel-v2"
-folder_list = ["result/cheetahvelv2/bayes/", "result/cheetahvelv2/rl2/", "result/cheetahvelv2/ts/"]
+folder_list = ["result/cheetahvelv2/bayes/", "result/cheetahvelv2/rl2/", "result/cheetahvelv2/ts/"] # keep this "order" if your results are stored in different folders
 algo_list = ['bayes', 'rl2', 'ts_opt']
 label_list = ['bayes', 'rl2', 'ts_opt']
 has_track_list = [True, False, True]
