@@ -1,4 +1,4 @@
-# Code for the paper "Meta-Reinforcement Learning by Tracking Task Non-Stationarity"
+# Code for the paper "Meta-Reinforcement Learning by Tracking Task Non-Stationarity" - IJCAI 2021
 
 ### Requirements
 The code is developed mainly with PyTorch. <br>
